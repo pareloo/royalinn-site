@@ -56,7 +56,7 @@
   function loadList() {
     api('bookings?status=' + tab).then(function (j) {
       if (j.status === 401) return show('login');
-      $('#c-new').textContent = (j.counts && j.counts['new']) || 0;
+      badge((j.counts && j.counts['new']) || 0);
       var box = $('#list'); box.textContent = '';
       $('#list-title').textContent = { 'new': 'طلبات بانتظار الرد', active: 'حجوزات لم تنتهِ بعد، حسب تاريخ الوصول', all: 'آخر 500 طلب' }[tab];
       if (!j.items || !j.items.length) { box.appendChild(el('p', 'empty', 'لا توجد طلبات هنا.')); return; }
@@ -253,6 +253,12 @@
     });
   });
 
-  setInterval(function () { if (!$('#app').hidden && (tab === 'new' || tab === 'active')) loadList(); }, 60000);
+  // the count of waiting requests shows on the tab button and in the browser tab title, on every screen
+  function badge(n) { $('#c-new').textContent = n; document.title = (n ? '(' + n + ') ' : '') + 'لوحة الحجوزات | Royal Inn'; }
+  setInterval(function () {
+    if ($('#app').hidden) return;
+    if (tab === 'new' || tab === 'active') loadList();
+    else api('bookings?status=new').then(function (j) { if (j.counts) badge(j.counts['new'] || 0); });
+  }, 60000);
   start();
 })();
