@@ -1,0 +1,31 @@
+ROYAL INN TARTUS — VPS (Coolify / Docker) PAKETİ
+================================================
+
+Bu klasör sitenin sunucuya kurulacak hâlidir:
+
+  Dockerfile   nginx kabını kurar
+  nginx.conf   güvenlik başlıkları, temiz adresler, önbellek kuralları
+  site/        sitenin bütün dosyaları
+
+AŞAMA: YAYIN — arama motorlarına açık.
+
+COOLIFY'DA KURULUM (panelde 5 adım)
+1. Bu klasörün içeriği bir Git deposunun köküne konur (Dockerfile en üstte durur).
+2. Coolify > Projects > + New > Resource: depoyu seç.
+3. Build Pack: Dockerfile.  Port: 80.
+4. Domains: https://royalinntartus.com,https://www.royalinntartus.com
+5. Deploy. SSL sertifikasını Coolify kendisi alır.
+
+ALAN ADI (Hostinger > DNS)
+  A      @     76.13.14.155
+  CNAME  www   royalinntartus.com
+
+DÜZ DOCKER İLE DENEME (isteğe bağlı)
+  docker build -t royalinn .
+  docker run -d --name royalinn -p 8080:80 royalinn
+  Tarayıcıda: http://SUNUCU-IP:8080/ar/
+
+NOT: nginx.conf gerçek bir sunucuda henüz denenmedi. İlk kurulumdan sonra
+şunlara bakılacak: /ar/rooms açılıyor mu, /ar/rooms.html -> /ar/rooms
+yönleniyor mu, www adresi çıplak alan adına gidiyor mu, güvenlik başlıkları
+geliyor mu.
