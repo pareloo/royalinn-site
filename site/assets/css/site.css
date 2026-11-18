@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=7b687a7d) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=7b687a7d) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=7b687a7d) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=bc524b8c) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=bc524b8c) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=bc524b8c) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -170,6 +170,11 @@ h1{font-size:1rem}
 .book-sum[hidden]{display:none}
 .field input[type="date"]{text-align:start}
 .field input::-webkit-date-and-time-value{text-align:start}
+.perks{list-style:none;margin:16px 0 0;padding:14px 0 0;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.perks li{display:flex;gap:10px;align-items:flex-start;font-size:.84rem;line-height:1.45;color:var(--muted)}
+.perks .ico{flex:none;width:20px;height:20px;color:var(--gold);margin-top:2px}
+.perks b{display:block;color:var(--sea);font-weight:700;font-size:.9rem}
+@media (min-width:980px){.perks{grid-template-columns:repeat(4,1fr)}}
 .book-note{font-size:.84rem;color:var(--muted);margin-top:12px;line-height:1.6}
 .book-note a{color:var(--sea);font-weight:600}
 .book-grid[hidden],.book-go[hidden],.book-more[hidden],.book-done[hidden],.book-avail[hidden],.book-err[hidden]{display:none}
