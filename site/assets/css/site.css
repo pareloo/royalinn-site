@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=27c652b0) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=27c652b0) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=27c652b0) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=3889ca94) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=3889ca94) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=3889ca94) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -172,6 +172,25 @@ h1{font-size:1rem}
 .field input::-webkit-date-and-time-value{text-align:start}
 .book-note{font-size:.84rem;color:var(--muted);margin-top:12px;line-height:1.6}
 .book-note a{color:var(--sea);font-weight:600}
+.book-grid[hidden],.book-go[hidden],.book-more[hidden],.book-done[hidden],.book-avail[hidden],.book-err[hidden]{display:none}
+.book-avail{margin-top:10px;padding:9px 14px;font-size:.9rem;font-weight:600;border-inline-start:2px solid}
+.book-avail.is-ok{color:#1f6b42;background:#eef7f1;border-color:#2e8b57}.book-avail.is-full{color:#8a2f2f;background:#fbefef;border-color:#b84a4a}
+.book-more{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+.book-grid2{display:grid;gap:12px}
+.field small{font-weight:400;opacity:.8}
+.field.bad input,.field.bad select{border-color:#b84a4a;background:#fff6f6}
+.check{display:flex;align-items:center;gap:10px;margin:14px 0 4px;font-size:.95rem;cursor:pointer}
+.check input{width:20px;height:20px;accent-color:var(--sea);flex:none}
+.hp{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.book-err{margin-top:12px;order:9;color:#8a2f2f;font-weight:600;font-size:.92rem}
+.book-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.book-actions .btn{flex:1 1 220px;min-height:52px}
+.book-actions .btn[disabled]{opacity:.6;cursor:wait}
+.book-done{margin-top:6px;padding:18px;background:var(--foam);border-inline-start:3px solid #2e8b57;outline:none}
+.book-done p{margin:0 0 8px}.book-done .btn{margin-top:6px}
+.book-done-h{display:flex;align-items:center;gap:8px;font-family:var(--f-head);font-size:1.3rem;color:var(--sea)}
+.book-done-h .ico{color:#2e8b57}
+@media (min-width:700px){.book-grid2{grid-template-columns:1fr 1fr}}
 @media (min-width:980px){
   .book{margin-top:-74px}
   .book-card{padding:26px 28px 20px}
@@ -315,6 +334,7 @@ h1{font-size:1rem}
 @media (min-width:800px){.ticks{grid-template-columns:repeat(4,1fr)}}
 .cards{display:grid;gap:16px}
 @media (min-width:800px){.cards{grid-template-columns:repeat(3,1fr);gap:22px}.cards.two{grid-template-columns:repeat(2,1fr)}
+.cards.c4{grid-template-columns:repeat(2,1fr)}
 .cards.c5{grid-template-columns:repeat(6,1fr)}.cards.c5>*{grid-column:span 2}.cards.c5>:nth-child(4){grid-column:2/span 2}}
 .card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:24px 22px}
 .card h3{font-size:calc(1.45rem*var(--h-scale));margin-bottom:8px}
@@ -391,3 +411,4 @@ h1{font-size:1rem}
 @media (min-width:1100px){.quotes{grid-template-columns:repeat(4,1fr)}.gcards{grid-template-columns:repeat(3,1fr)}.gcards.g4{grid-template-columns:repeat(4,1fr)}}
 @media (hover:hover){.gcard:hover{box-shadow:0 14px 34px rgba(15,61,82,.12);transform:translateY(-2px)}}
 @media (max-width:699px){.r219{aspect-ratio:16/9}}
+@media (min-width:1100px){.cards.c4{grid-template-columns:repeat(4,1fr)}}

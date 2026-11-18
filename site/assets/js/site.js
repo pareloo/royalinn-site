@@ -1,4 +1,4 @@
-/* Royal Inn Tartus — small helpers. No tracking, no cookies, no network requests. */
+/* Royal Inn Tartus — small helpers. No tracking, no cookies; the only requests go to the hotel's own booking server. */
 (function () {
   'use strict';
   var d = document, root = d.documentElement;
@@ -30,42 +30,111 @@
   function pad(n) { return (n < 10 ? '0' : '') + n; }
   function iso(t) { return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()); }
 
-  /* booking request: build the WhatsApp / email text on the device, nothing is sent from the page itself */
+  /* booking: dates first, then guest details; the request goes to the hotel's own server (or WhatsApp as a fallback) */
   each('[data-booking]', function (box) {
-    var ci = box.querySelector('[name=in]'), co = box.querySelector('[name=out]');
-    var guests = box.querySelector('[name=guests]'), room = box.querySelector('[name=room]');
+    var f = function (n) { return box.querySelector('[name=' + n + ']'); };
+    var ci = f('in'), co = f('out'), guests = f('guests'), room = f('room');
     var wa = box.querySelector('[data-wa-link]'), mail = box.querySelector('[data-mail-link]'), sum = box.querySelector('[data-sum]');
-    var L = box.dataset, now = new Date();
+    var more = box.querySelector('[data-more]'), next = box.querySelector('[data-next]'), err = box.querySelector('[data-err]');
+    var avail = box.querySelector('[data-avail]'), done = box.querySelector('[data-done]'), send = box.querySelector('[data-send]');
+    var L = box.dataset, now = new Date(), api = L.api, lastCheck = '', sending = false;
     ci.min = iso(now);
     co.min = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
-    function update() {
-      if (ci.value) {
-        var p = ci.value.split('-'), next = new Date(+p[0], +p[1] - 1, +p[2] + 1);
-        co.min = iso(next);
-        if (co.value && co.value <= ci.value) { co.value = iso(next); }
-      }
-      var lines = [L.hello], nights = 0;
+    function nights() {
+      if (!ci.value || !co.value) { return 0; }
+      var a = ci.value.split('-'), b = co.value.split('-');
+      return Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 864e5);
+    }
+    function rate() {
+      var o = room.value ? room.options[room.selectedIndex] : null;
+      if (!o) { return 0; }
+      var p1 = +o.getAttribute('data-price') || 0, p2 = +o.getAttribute('data-price2') || 0;
+      return (p2 && +guests.value >= 2) ? p2 : p1;
+    }
+    function text(ref) {
+      var lines = [L.hello], n = nights();
+      if (ref) { lines.push(L.lref + ': ' + ref); }
+      if (f('name').value.trim()) { lines.push(L.lname + ': ' + f('name').value.trim()); }
       if (ci.value) { lines.push(L.lin + ': ' + ci.value); }
       if (co.value) { lines.push(L.lout + ': ' + co.value); }
-      if (ci.value && co.value) {
-        var a = ci.value.split('-'), b = co.value.split('-');
-        nights = Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 864e5);
-      }
-      if (nights > 0) { lines.push(L.lnights + ': ' + nights); }
+      if (n > 0) { lines.push(L.lnights + ': ' + n); }
       lines.push(L.lguests + ': ' + guests.value);
       if (room.value) { lines.push(L.lroom + ': ' + room.options[room.selectedIndex].text); }
-      var text = lines.join('\n');
-      wa.href = 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text);
-      if (mail) { mail.href = 'mailto:' + L.mail + '?subject=' + encodeURIComponent(L.subject) + '&body=' + encodeURIComponent(text); }
-      if (sum) {
-        if (nights > 0) {
-          var line = L.lnights + ': ' + nights + ' · ' + L.lguests + ': ' + guests.value;
-          var price = room.value ? +room.options[room.selectedIndex].getAttribute('data-price') : 0;
-          if (price) { line += ' · ' + L.est.replace('{p}', '$' + price * nights); }
-          sum.textContent = line; sum.hidden = false;
-        } else { sum.hidden = true; }
-      }
+      if (f('breakfast').checked) { lines.push(L.lbf + ': ' + L.yes); }
+      if (f('message').value.trim()) { lines.push(f('message').value.trim()); }
+      return lines.join('\n');
     }
+    function waUrl(ref) { return 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text(ref)); }
+    function checkAvail() {
+      var n = nights(), key = ci.value + '|' + co.value + '|' + room.value;
+      if (!api || n <= 0 || key === lastCheck || !window.fetch) { if (n <= 0) { avail.hidden = true; lastCheck = ''; } return; }
+      lastCheck = key;
+      fetch(api + 'availability?in=' + ci.value + '&out=' + co.value + '&room=' + encodeURIComponent(room.value), { credentials: 'omit' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (key !== lastCheck || !j.ok) { return; }
+          avail.textContent = j.available ? L.availYes : L.availNo;
+          avail.className = 'book-avail ' + (j.available ? 'is-ok' : 'is-full'); avail.hidden = false;
+        }).catch(function () { avail.hidden = true; });
+    }
+    function update() {
+      if (ci.value) {
+        var p = ci.value.split('-'), nx = new Date(+p[0], +p[1] - 1, +p[2] + 1);
+        co.min = iso(nx);
+        if (co.value && co.value <= ci.value) { co.value = iso(nx); }
+      }
+      wa.href = waUrl();
+      if (mail) { mail.href = 'mailto:' + L.mail + '?subject=' + encodeURIComponent(L.subject) + '&body=' + encodeURIComponent(text()); }
+      var n = nights();
+      if (n > 0) {
+        var line = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value, pr = rate();
+        if (pr) { line += ' · ' + L.est.replace('{p}', '$' + pr * n); }
+        sum.textContent = line; sum.hidden = false;
+      } else { sum.hidden = true; }
+      checkAvail();
+    }
+    function fail(msg, fields) {
+      err.textContent = msg; err.hidden = false;
+      each('.field', function (x) { x.classList.remove('bad'); }, box);
+      (fields || []).forEach(function (k) {
+        var map = { dates: ['in', 'out'] }, names = map[k] || [k];
+        names.forEach(function (nm) { var i = f(nm); if (i) { i.closest('.field').classList.add('bad'); } });
+      });
+    }
+    next.addEventListener('click', function () {
+      if (nights() <= 0) { fail(L.errDates, ['dates']); (ci.value ? co : ci).focus(); return; }
+      err.hidden = true; each('.field', function (x) { x.classList.remove('bad'); }, box);
+      more.hidden = false; next.hidden = true; f('name').focus();
+    });
+    box.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (sending) { return; }
+      var bad = [];
+      if (nights() <= 0) { bad.push('dates'); }
+      if (f('name').value.trim().length < 2) { bad.push('name'); }
+      if (f('phone').value.replace(/\D/g, '').length < 7) { bad.push('phone'); }
+      if (f('email').value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f('email').value)) { bad.push('email'); }
+      if (bad.length) { fail(bad[0] === 'dates' ? L.errDates : L.errFields, bad); return; }
+      if (!api || !window.fetch) { window.open(waUrl(), '_blank', 'noopener'); return; }
+      sending = true; send.disabled = true; err.hidden = true;
+      var body = { lang: L.lang, 'in': ci.value, out: co.value, guests: +guests.value, room: room.value, name: f('name').value.trim(),
+                   phone: f('phone').value.trim(), email: f('email').value.trim(), message: f('message').value.trim(),
+                   breakfast: f('breakfast').checked, website: f('website').value };
+      fetch(api + 'booking', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json().then(function (j) { j.code = r.status; return j; }); })
+        .then(function (j) {
+          sending = false; send.disabled = false;
+          if (j.ok) {
+            box.querySelector('[data-ref]').textContent = j.ref;
+            box.querySelector('[data-wa-done]').href = waUrl(j.ref);
+            more.hidden = true; box.querySelector('.book-grid').hidden = true; sum.hidden = true; avail.hidden = true;
+            done.hidden = false; done.focus();
+          } else if (j.code === 429) { fail(L.errBusy); }
+          else if (j.fields) { fail(L.errFields, j.fields); }
+          else { fail(L.errNet); }
+        })
+        .catch(function () { sending = false; send.disabled = false; fail(L.errNet); });
+    });
     box.addEventListener('input', update);
     box.addEventListener('change', update);
     update();

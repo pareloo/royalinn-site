@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>لوحة الحجوزات | رويال إن</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
+<link rel="stylesheet" href="/panel/panel.css?v=2">
+<script src="/panel/panel.js?v=2" defer></script>
+</head>
+<body>
+<header class="top">
+  <img src="/assets/img/logo.svg" alt="Royal Inn" class="logo" width="150" height="38">
+  <span class="title">لوحة الحجوزات</span>
+  <button class="ghost" id="logout" hidden>خروج</button>
+</header>
+
+<main>
+  <section id="login" class="card narrow" hidden>
+    <h1>تسجيل الدخول</h1>
+    <p id="login-msg" class="muted">أدخل كلمة مرور اللوحة.</p>
+    <form id="login-form">
+      <label>كلمة المرور<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="gold" type="submit">دخول</button>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <nav class="tabs" role="tablist">
+      <button data-tab="new" class="on">طلبات جديدة <b id="c-new">0</b></button>
+      <button data-tab="active">الحجوزات القادمة</button>
+      <button data-tab="all">كل الطلبات</button>
+      <button data-tab="closures">أيام مكتملة</button>
+      <button data-tab="inventory">عدد الغرف</button>
+    </nav>
+
+    <div id="view-list">
+      <div class="bar"><span id="list-title" class="muted"></span><a class="ghost" href="/api/admin/export.csv">تنزيل Excel (CSV)</a></div>
+      <div id="list"></div>
+    </div>
+
+    <div id="view-closures" hidden>
+      <div class="card">
+        <h2>إغلاق تواريخ (الفندق مكتمل)</h2>
+        <p class="muted">في هذه التواريخ يظهر للزبون على الموقع أن الغرف غير متاحة.</p>
+        <form id="closure-form" class="row">
+          <label>من<input type="date" name="from" required></label>
+          <label>إلى<input type="date" name="to" required></label>
+          <label>نوع الغرفة<select name="room" id="closure-room"><option value="">كل الغرف</option></select></label>
+          <label class="grow">ملاحظة<input type="text" name="note" maxlength="120" placeholder="مثلاً: عرس، صيانة"></label>
+          <button class="gold" type="submit">إغلاق</button>
+        </form>
+      </div>
+      <div id="closures"></div>
+    </div>
+
+    <div id="view-inventory" hidden>
+      <div class="card">
+        <h2>عدد الغرف من كل نوع</h2>
+        <p class="muted">اختياري. إذا كتبت العدد، يتوقف الموقع عن قبول طلبات لهذا النوع عندما تمتلئ كل الغرف بحجوزات مؤكَّدة. اتركه فارغاً إذا لا تريد ذلك.</p>
+        <form id="inv-form"><div id="inv-rows"></div><button class="gold" type="submit">حفظ</button></form>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

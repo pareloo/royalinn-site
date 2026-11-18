@@ -1,4 +1,4 @@
-Contact: tel:+963998730730
+Contact: mailto:res@royalinn.org
 Expires: 2027-11-17T00:00:00.000Z
 Preferred-Languages: ar, en, tr
 Canonical: https://royalinntartus.com/.well-known/security.txt
