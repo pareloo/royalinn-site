@@ -7,8 +7,8 @@
 <title>لوحة الحجوزات | رويال إن</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
-<link rel="stylesheet" href="/panel/panel.css?v=2">
-<script src="/panel/panel.js?v=2" defer></script>
+<link rel="stylesheet" href="/panel/panel.css?v=3">
+<script src="/panel/panel.js?v=3" defer></script>
 </head>
 <body>
 <header class="top">
@@ -32,6 +32,9 @@
       <button data-tab="new" class="on">طلبات جديدة <b id="c-new">0</b></button>
       <button data-tab="active">الحجوزات القادمة</button>
       <button data-tab="all">كل الطلبات</button>
+      <button data-tab="occupancy">الإشغال</button>
+      <button data-tab="add">+ حجز هاتفي</button>
+      <button data-tab="prices">الأسعار</button>
       <button data-tab="closures">أيام مكتملة</button>
       <button data-tab="inventory">عدد الغرف</button>
     </nav>
@@ -39,6 +42,55 @@
     <div id="view-list">
       <div class="bar"><span id="list-title" class="muted"></span><a class="ghost" href="/api/admin/export.csv">تنزيل Excel (CSV)</a></div>
       <div id="list"></div>
+    </div>
+
+    <div id="view-occupancy" hidden>
+      <div class="bar"><span class="muted">الأرقام: حجوزات مؤكَّدة / عدد الغرف. البرتقالي = طلبات جديدة لم تُؤكَّد. الرمادي = مغلق.</span>
+        <span><button class="ghost" id="occ-prev" type="button">‹ السابق</button> <button class="ghost" id="occ-next" type="button">التالي ›</button></span></div>
+      <div class="card scroll"><table id="occ" class="occ"></table></div>
+    </div>
+
+    <div id="view-add" hidden>
+      <div class="card">
+        <h2>تسجيل حجز جاء بالهاتف أو في الاستقبال</h2>
+        <p class="muted">يُسجَّل كحجز مؤكَّد، ويُحسب في الإشغال حتى لا يُحجز نفس المكان مرتين.</p>
+        <form id="add-form" class="grid2">
+          <label>الاسم<input type="text" name="name" maxlength="80" required></label>
+          <label>الهاتف<input type="tel" name="phone" maxlength="24" dir="ltr"></label>
+          <label>الوصول<input type="date" name="in" required></label>
+          <label>المغادرة<input type="date" name="out" required></label>
+          <label>نوع الغرفة<select name="room" class="room-select"><option value="">غير محدد</option></select></label>
+          <label>الضيوف<input type="number" name="guests" min="1" max="12" value="2"></label>
+          <label>المبلغ الإجمالي $ (اختياري)<input type="number" name="total" min="0" placeholder="يُحسب تلقائياً"></label>
+          <label>ملاحظة<input type="text" name="note" maxlength="400"></label>
+          <label class="inline"><input type="checkbox" name="breakfast"> مع الفطور</label>
+          <button class="gold" type="submit">حفظ الحجز</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="view-prices" hidden>
+      <div class="card">
+        <h2>السعر الأساسي لليلة ($، شامل الضريبة)</h2>
+        <p class="muted">«لشخصين+» اختياري: يُستعمل عندما يكون عدد الضيوف 2 أو أكثر. اتركه فارغاً إذا السعر واحد. اترك الكل فارغاً = «السعر عند الطلب».</p>
+        <form id="price-form"><table class="ptable"><thead><tr><th>نوع الغرفة</th><th>السعر</th><th>لشخصين+</th></tr></thead><tbody id="price-rows"></tbody></table>
+        <button class="gold" type="submit">حفظ الأسعار</button></form>
+      </div>
+      <div class="card">
+        <h2>أسعار خاصة (موسم، أعياد، نهاية الأسبوع)</h2>
+        <p class="muted">تُطبَّق على التواريخ المحددة بدل السعر الأساسي. إذا اخترت أياماً معيّنة، تُطبَّق فقط في تلك الأيام.</p>
+        <form id="rate-form" class="grid2">
+          <label>من<input type="date" name="from" required></label>
+          <label>إلى<input type="date" name="to" required></label>
+          <label>نوع الغرفة<select name="room" class="room-select"><option value="">كل الغرف</option></select></label>
+          <label>السعر $<input type="number" name="price" min="1" required></label>
+          <label>لشخصين+ $ (اختياري)<input type="number" name="price2" min="1"></label>
+          <label>اسم (مثلاً: صيف، عيد)<input type="text" name="note" maxlength="120"></label>
+          <fieldset class="days"><legend>أيام فقط (اختياري)</legend><label><input type="checkbox" name="d" value="6"> الأحد</label><label><input type="checkbox" name="d" value="0"> الإثنين</label><label><input type="checkbox" name="d" value="1"> الثلاثاء</label><label><input type="checkbox" name="d" value="2"> الأربعاء</label><label><input type="checkbox" name="d" value="3"> الخميس</label><label><input type="checkbox" name="d" value="4"> الجمعة</label><label><input type="checkbox" name="d" value="5"> السبت</label></fieldset>
+          <button class="gold" type="submit">إضافة</button>
+        </form>
+      </div>
+      <div id="rates"></div>
     </div>
 
     <div id="view-closures" hidden>

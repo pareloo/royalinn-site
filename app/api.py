@@ -6,6 +6,7 @@ Data lives in SQLite under DATA_DIR (a persistent volume, /data in the container
 
 Public:   GET  /api/health
           GET  /api/availability?in=YYYY-MM-DD&out=YYYY-MM-DD&room=<id>
+          GET  /api/quote?in=...&out=...&guests=2[&room=<id>]   prices and availability per room type
           POST /api/booking                    (JSON)
 Panel:    POST /api/admin/login | /api/admin/logout
           GET  /api/admin/me
@@ -15,6 +16,11 @@ Panel:    POST /api/admin/login | /api/admin/logout
           POST /api/admin/closures/<id>/delete
           GET  /api/admin/inventory            POST /api/admin/inventory {"<room>": n, ...}
           GET  /api/admin/export.csv
+          GET/POST /api/admin/prices           base rate per room type
+          GET  /api/admin/rates                POST /api/admin/rates {room, from, to, price, price2, days, note}
+          POST /api/admin/rates/<id>/delete
+          POST /api/admin/bookings/new         booking taken by phone / at the desk
+          GET  /api/admin/occupancy?from=YYYY-MM-DD&days=31
 
 The panel password comes from the PANEL_PASSWORD environment variable; without it the panel stays locked.
 Optional e-mail notice for each new request: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, NOTIFY_TO.
@@ -34,6 +40,9 @@ ROOMS = {
     'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', 'جناح رويال بغرفتَي نوم'),
 }
 STATUSES = ('new', 'confirmed', 'cancelled')
+# rates confirmed by the hotel (Nov 2026), USD per night incl. tax; price2 = two or more guests. None = on request
+DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (None, None), 'royal-suite': (None, None), 'two-bedroom-royal-suite': (None, None)}
+BREAKFAST = 10
 MAX_NIGHTS, MAX_AHEAD_DAYS = 60, 550
 SESSION_HOURS = 12
 LOCK = threading.Lock()
@@ -60,7 +69,17 @@ def init():
         CREATE TABLE IF NOT EXISTS closures(
             id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, date_from TEXT NOT NULL, date_to TEXT NOT NULL, note TEXT, created TEXT);
         CREATE TABLE IF NOT EXISTS inventory(room TEXT PRIMARY KEY, count INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS prices(room TEXT PRIMARY KEY, price INTEGER, price2 INTEGER);
+        CREATE TABLE IF NOT EXISTS rates(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, date_from TEXT NOT NULL, date_to TEXT NOT NULL,
+            price INTEGER, price2 INTEGER, days TEXT, note TEXT, created TEXT);
         ''')
+        cols = [r[1] for r in con.execute('PRAGMA table_info(bookings)')]
+        for c, t in (('total', 'INTEGER'), ('source', 'TEXT')):
+            if c not in cols:
+                con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
+        for k, (a, b) in DEFAULT_PRICES.items():
+            con.execute('INSERT OR IGNORE INTO prices(room,price,price2) VALUES(?,?,?)', (k, a, b))
     path = os.path.join(DATA, 'secret.key')
     if not os.path.exists(path):
         with open(path, 'w') as f:
@@ -122,6 +141,50 @@ def availability(con, a, b, room):
                 if used >= inv['count']:
                     return False
     return True
+
+
+def nightly(con, room, guests, nights):
+    """Price for each night (None when the hotel gives the rate on request). Later rules win over earlier ones."""
+    base = con.execute('SELECT price, price2 FROM prices WHERE room=?', (room,)).fetchone()
+    rules = con.execute('SELECT * FROM rates WHERE (room=? OR room IS NULL) AND date_from <= ? AND date_to >= ? ORDER BY id',
+                        (room, nights[-1].isoformat(), nights[0].isoformat())).fetchall()
+    out = []
+    for n in nights:
+        p1, p2 = (base['price'], base['price2']) if base else (None, None)
+        for r in rules:
+            if not (r['date_from'] <= n.isoformat() <= r['date_to']):
+                continue
+            if r['days'] and str(n.weekday()) not in r['days'].split(','):
+                continue
+            if r['price'] is not None:
+                p1, p2 = r['price'], r['price2']
+        out.append(p2 if (p2 and guests >= 2) else p1)
+    return out
+
+
+def left(con, room, nights):
+    """Rooms of this type still free on the busiest night, or None when the hotel has not set a room count."""
+    inv = con.execute('SELECT count FROM inventory WHERE room=?', (room,)).fetchone()
+    if inv is None:
+        return None
+    a, b = nights[0], nights[-1] + dt.timedelta(days=1)
+    booked = con.execute("SELECT check_in, check_out FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ?",
+                         (room, b.isoformat(), a.isoformat())).fetchall()
+    used = max(sum(1 for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
+    return max(inv['count'] - used, 0)
+
+
+def quote(con, a, b, guests, room=None):
+    nights = [a + dt.timedelta(days=i) for i in range((b - a).days)]
+    out = []
+    for k, names in ROOMS.items():
+        if room and k != room:
+            continue
+        per = nightly(con, k, guests, nights)
+        total = None if any(x is None for x in per) else sum(per)
+        out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k),
+                    'left': left(con, k, nights), 'total': total, 'nightly': per})
+    return out
 
 
 # ---------------------------------------------------------------- validation
@@ -306,6 +369,25 @@ class H(BaseHTTPRequestHandler):
             with db() as con:
                 ok = availability(con, dates[0], dates[1], room)
             return self.send(200, {'ok': True, 'available': ok, 'nights': (dates[1] - dates[0]).days})
+        if p == '/api/prices':
+            with db() as con:
+                rows = {r['room']: {'price': r['price'], 'price2': r['price2']} for r in con.execute('SELECT * FROM prices') if r['room'] in ROOMS}
+            return self.send(200, {'ok': True, 'rooms': rows})
+        if p == '/api/quote':
+            if limited('av:' + self.ip(), 60, 60):
+                return self.send(429, {'ok': False, 'error': 'busy'})
+            dates, err = check_dates(q.get('in'), q.get('out'))
+            room = q.get('room') or None
+            try:
+                guests = max(1, min(12, int(q.get('guests') or 2)))
+            except ValueError:
+                guests = 2
+            if err or (room and room not in ROOMS):
+                return self.send(400, {'ok': False, 'error': 'dates'})
+            with db() as con:
+                rooms = quote(con, dates[0], dates[1], guests, room)
+                any_open = availability(con, dates[0], dates[1], None)
+            return self.send(200, {'ok': True, 'nights': (dates[1] - dates[0]).days, 'open': any_open, 'rooms': rooms, 'breakfast': BREAKFAST})
         if p.startswith('/api/admin/'):
             if p == '/api/admin/me':
                 return self.send(200, {'ok': True, 'auth': bool(self.session()), 'configured': bool(os.environ.get('PANEL_PASSWORD'))})
@@ -331,9 +413,40 @@ class H(BaseHTTPRequestHandler):
                 if p == '/api/admin/inventory':
                     inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'count': inv.get(k)} for k, v in ROOMS.items()]})
+                if p == '/api/admin/prices':
+                    rows = {r['room']: r for r in con.execute('SELECT * FROM prices')}
+                    return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'price': rows[k]['price'] if k in rows else None,
+                                                                   'price2': rows[k]['price2'] if k in rows else None} for k, v in ROOMS.items()]})
+                if p == '/api/admin/rates':
+                    rows = con.execute('SELECT * FROM rates WHERE date_to >= ? ORDER BY date_from', (dt.date.today().isoformat(),)).fetchall()
+                    return self.send(200, {'ok': True, 'items': [dict(r) for r in rows]})
+                if p == '/api/admin/occupancy':
+                    start = parse_day(q.get('from')) or dt.date.today()
+                    try:
+                        days = max(7, min(62, int(q.get('days') or 31)))
+                    except ValueError:
+                        days = 31
+                    end = start + dt.timedelta(days=days)
+                    dates = [start + dt.timedelta(days=i) for i in range(days)]
+                    bks = con.execute("SELECT room, status, check_in, check_out FROM bookings WHERE status!='cancelled' AND check_in < ? AND check_out > ?",
+                                      (end.isoformat(), start.isoformat())).fetchall()
+                    inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
+                    cls = con.execute('SELECT room, date_from, date_to FROM closures WHERE date_from < ? AND date_to >= ?', (end.isoformat(), start.isoformat())).fetchall()
+                    rows = []
+                    for k, v in ROOMS.items():
+                        cells = []
+                        for d in dates:
+                            ds = d.isoformat()
+                            conf = sum(1 for x in bks if x['room'] == k and x['status'] == 'confirmed' and x['check_in'] <= ds < x['check_out'])
+                            new = sum(1 for x in bks if x['room'] == k and x['status'] == 'new' and x['check_in'] <= ds < x['check_out'])
+                            closed = any((c['room'] in (None, k)) and c['date_from'] <= ds <= c['date_to'] for c in cls)
+                            cells.append([conf, new, 1 if closed else 0])
+                        rows.append({'id': k, 'name': v[1], 'count': inv.get(k), 'cells': cells})
+                    unassigned = [[sum(1 for x in bks if not x['room'] and x['status'] == s and x['check_in'] <= d.isoformat() < x['check_out']) for s in ('confirmed', 'new')] for d in dates]
+                    return self.send(200, {'ok': True, 'dates': [d.isoformat() for d in dates], 'rows': rows, 'any': unassigned})
                 if p == '/api/admin/export.csv':
                     out = io.StringIO(); w = csv.writer(out)
-                    cols = ['ref', 'created', 'status', 'check_in', 'check_out', 'nights', 'guests', 'room', 'breakfast', 'name', 'phone', 'email', 'message', 'staff_note']
+                    cols = ['ref', 'created', 'status', 'source', 'check_in', 'check_out', 'nights', 'guests', 'room', 'breakfast', 'total', 'name', 'phone', 'email', 'message', 'staff_note']
                     w.writerow(cols)
                     for r in con.execute('SELECT * FROM bookings ORDER BY created'):
                         w.writerow(['' if r[c] is None else r[c] for c in cols])
@@ -363,13 +476,19 @@ class H(BaseHTTPRequestHandler):
                 while con.execute('SELECT 1 FROM bookings WHERE ref=?', (ref,)).fetchone():
                     ref = new_ref()
                 avail = availability(con, a, b, v['room'])
-                rec = dict(ref=ref, created=now(), lang=v['lang'], status='new', check_in=a.isoformat(), check_out=b.isoformat(),
+                total = None
+                if v['room']:
+                    per = nightly(con, v['room'], v['guests'], [a + dt.timedelta(days=i) for i in range((b - a).days)])
+                    total = None if any(x is None for x in per) else sum(per)
+                    if total is not None and v['breakfast']:
+                        total += BREAKFAST * v['guests'] * len(per)
+                rec = dict(total=total, source='web', ref=ref, created=now(), lang=v['lang'], status='new', check_in=a.isoformat(), check_out=b.isoformat(),
                            nights=(b - a).days, guests=v['guests'], room=v['room'], breakfast=v['breakfast'], name=v['name'],
                            phone=v['phone'], email=v['email'], message=v['message'])
-                con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message) '
-                            'VALUES(:ref,:created,:lang,:status,:check_in,:check_out,:nights,:guests,:room,:breakfast,:name,:phone,:email,:message)', rec)
+                con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source) '
+                            'VALUES(:ref,:created,:lang,:status,:check_in,:check_out,:nights,:guests,:room,:breakfast,:name,:phone,:email,:message,:total,:source)', rec)
             threading.Thread(target=notify, args=(rec,), daemon=True).start()
-            return self.send(200, {'ok': True, 'ref': ref, 'available': avail})
+            return self.send(200, {'ok': True, 'ref': ref, 'available': avail, 'total': total})
 
         if p == '/api/admin/login':
             pw = os.environ.get('PANEL_PASSWORD', '')
@@ -388,6 +507,68 @@ class H(BaseHTTPRequestHandler):
         if p.startswith('/api/admin/'):
             if not self.session():
                 return self.send(401, {'ok': False, 'error': 'auth'})
+            if p == '/api/admin/bookings/new':
+                f, t = parse_day(d.get('in')), parse_day(d.get('out'))
+                name, phone = clean(d.get('name'), 80), clean(d.get('phone'), 24)
+                room = d.get('room') or None
+                try:
+                    guests = max(1, min(12, int(d.get('guests') or 2)))
+                    total = int(d['total']) if d.get('total') not in (None, '') else None
+                except (TypeError, ValueError):
+                    return self.send(400, {'ok': False, 'error': 'fields'})
+                if not f or not t or t <= f or (t - f).days > 120 or len(name) < 2 or (room and room not in ROOMS):
+                    return self.send(400, {'ok': False, 'error': 'fields'})
+                with LOCK, db() as con:
+                    ref = new_ref()
+                    while con.execute('SELECT 1 FROM bookings WHERE ref=?', (ref,)).fetchone():
+                        ref = new_ref()
+                    if total is None and room:
+                        per = nightly(con, room, guests, [f + dt.timedelta(days=i) for i in range((t - f).days)])
+                        total = None if any(x is None for x in per) else sum(per)
+                    con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source,staff_note,updated) '
+                                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (ref, now(), 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, room,
+                                 1 if d.get('breakfast') else 0, name, phone or '-', None, clean(d.get('message'), 600) or None, total, 'desk',
+                                 clean(d.get('note'), 400) or None, now()))
+                return self.send(200, {'ok': True, 'ref': ref})
+            if p == '/api/admin/prices':
+                with db() as con:
+                    for k in ROOMS:
+                        if k not in d or not isinstance(d[k], dict):
+                            continue
+                        vals = []
+                        for key in ('price', 'price2'):
+                            x = d[k].get(key)
+                            if x in (None, ''):
+                                vals.append(None); continue
+                            try:
+                                x = int(x)
+                            except (TypeError, ValueError):
+                                return self.send(400, {'ok': False})
+                            if not 0 < x < 100000:
+                                return self.send(400, {'ok': False})
+                            vals.append(x)
+                        con.execute('INSERT INTO prices(room,price,price2) VALUES(?,?,?) ON CONFLICT(room) DO UPDATE SET price=excluded.price, price2=excluded.price2', (k, *vals))
+                return self.send(200, {'ok': True})
+            if p == '/api/admin/rates':
+                f, t = parse_day(d.get('from')), parse_day(d.get('to') or d.get('from'))
+                room = d.get('room') or None
+                days = ','.join(sorted({str(int(x)) for x in (d.get('days') or []) if str(x).isdigit() and 0 <= int(x) <= 6}))
+                try:
+                    price = int(d['price']); price2 = int(d['price2']) if d.get('price2') not in (None, '') else None
+                except (KeyError, TypeError, ValueError):
+                    return self.send(400, {'ok': False, 'error': 'price'})
+                if not f or not t or t < f or (t - f).days > 400 or (room and room not in ROOMS) or not 0 < price < 100000:
+                    return self.send(400, {'ok': False, 'error': 'dates'})
+                with db() as con:
+                    con.execute('INSERT INTO rates(room,date_from,date_to,price,price2,days,note,created) VALUES(?,?,?,?,?,?,?,?)',
+                                (room, f.isoformat(), t.isoformat(), price, price2, days or None, clean(d.get('note'), 120) or None, now()))
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/rates/(\d+)/delete', p)
+            if m:
+                with db() as con:
+                    con.execute('DELETE FROM rates WHERE id=?', (int(m.group(1)),))
+                return self.send(200, {'ok': True})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})', p)
             if m:
                 st = d.get('status')

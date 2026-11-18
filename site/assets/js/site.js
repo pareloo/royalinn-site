@@ -65,18 +65,47 @@
       return lines.join('\n');
     }
     function waUrl(ref) { return 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text(ref)); }
+    function money(n) { return '$' + n; }
     function checkAvail() {
-      var n = nights(), key = ci.value + '|' + co.value + '|' + room.value;
-      if (!api || n <= 0 || key === lastCheck || !window.fetch) { if (n <= 0) { avail.hidden = true; lastCheck = ''; } return; }
+      var n = nights(), key = ci.value + '|' + co.value + '|' + room.value + '|' + guests.value;
+      if (!api || n <= 0 || !window.fetch) { avail.hidden = true; lastCheck = ''; return; }
+      if (key === lastCheck) { return; }
       lastCheck = key;
-      fetch(api + 'availability?in=' + ci.value + '&out=' + co.value + '&room=' + encodeURIComponent(room.value), { credentials: 'omit' })
+      fetch(api + 'quote?in=' + ci.value + '&out=' + co.value + '&guests=' + guests.value + '&room=' + encodeURIComponent(room.value), { credentials: 'omit' })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (key !== lastCheck || !j.ok) { return; }
-          avail.textContent = j.available ? L.availYes : L.availNo;
-          avail.className = 'book-avail ' + (j.available ? 'is-ok' : 'is-full'); avail.hidden = false;
+          avail.textContent = '';
+          var ok = room.value ? (j.rooms[0] && j.rooms[0].available) : j.open;
+          var head = d.createElement('b'); head.textContent = ok ? L.availYes : L.availNo; avail.appendChild(head);
+          if (room.value && j.rooms[0]) {
+            var tot = j.rooms[0].total, line = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value;
+            sum.textContent = tot ? line + ' · ' + L.est.replace('{p}', money(tot)) : line + ' · ' + L.ask; sum.hidden = false;
+          }
+          if (ok) {
+            var list = j.rooms.filter(function (r) { return r.available; });
+            if (room.value && list[0] && list[0].left !== null && list[0].left <= 3) {
+              avail.appendChild(d.createTextNode(' ' + L.left.replace('{n}', list[0].left)));
+            }
+            if (!room.value) {
+              var ul = d.createElement('ul'); ul.className = 'book-opts';
+              list.forEach(function (r) {
+                var li = d.createElement('li'), bt = d.createElement('button');
+                bt.type = 'button'; bt.setAttribute('data-pick', r.id);
+                var nm = d.createElement('span'); nm.textContent = L.lang === 'en' ? r.name_en : r.name_ar;
+                var pr = d.createElement('b'); pr.textContent = r.total ? money(r.total) : L.ask;
+                bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
+              });
+              avail.appendChild(ul);
+            }
+          }
+          avail.className = 'book-avail ' + (ok ? 'is-ok' : 'is-full'); avail.hidden = false;
         }).catch(function () { avail.hidden = true; });
     }
+    avail.addEventListener('click', function (e) {
+      var bt = e.target.closest && e.target.closest('[data-pick]');
+      if (bt) { room.value = bt.getAttribute('data-pick'); update(); }
+    });
     function update() {
       if (ci.value) {
         var p = ci.value.split('-'), nx = new Date(+p[0], +p[1] - 1, +p[2] + 1);
@@ -139,6 +168,22 @@
     box.addEventListener('change', update);
     update();
   });
+
+  /* room prices: the hotel can change them in its panel, so the page refreshes them from the server */
+  (function () {
+    var tags = d.querySelectorAll('[data-rp]'), api = root.getAttribute('data-api');
+    if (!tags.length || !api || !window.fetch) { return; }
+    fetch(api + 'prices', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { return; }
+      Array.prototype.forEach.call(tags, function (t) {
+        var p = j.rooms[t.getAttribute('data-rp')]; if (!p) { return; }
+        t.textContent = '';
+        if (p.price == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
+        var b = d.createElement('b'); b.className = 'ltr'; b.textContent = '$' + p.price;
+        t.appendChild(d.createTextNode(t.getAttribute('data-frm') + ' ')); t.appendChild(b); t.appendChild(d.createTextNode(' ' + t.getAttribute('data-per')));
+      });
+    }).catch(function () {});
+  })();
 
   /* phone booking bar: stays out of the way while the booking box itself is on screen */
   each('.mbar', function (bar) {
