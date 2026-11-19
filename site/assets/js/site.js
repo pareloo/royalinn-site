@@ -92,7 +92,7 @@
               list.forEach(function (r) {
                 var li = d.createElement('li'), bt = d.createElement('button');
                 bt.type = 'button'; bt.setAttribute('data-pick', r.id);
-                var nm = d.createElement('span'); nm.textContent = L.lang === 'en' ? r.name_en : r.name_ar;
+                var nm = d.createElement('span'), op = room.querySelector('option[value="' + r.id + '"]'); nm.textContent = op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en);
                 var pr = d.createElement('b'); pr.textContent = r.total ? money(r.total) : L.ask;
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
               });

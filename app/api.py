@@ -221,7 +221,7 @@ def validate_booking(d):
         errs.append('room')
     if not 1 <= guests <= 12:
         errs.append('guests')
-    lang = 'en' if d.get('lang') == 'en' else 'ar'
+    lang = d.get('lang') if d.get('lang') in ('en', 'tr') else 'ar'
     return errs, dict(dates=dates, name=name, phone=phone, email=email or None, room=room or None, message=msg or None,
                       guests=guests, breakfast=1 if d.get('breakfast') in (True, 1, '1', 'on', 'true') else 0, lang=lang)
 
