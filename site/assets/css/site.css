@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=9650441a) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=9650441a) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=9650441a) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=165c6e25) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=165c6e25) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=165c6e25) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -432,3 +432,15 @@ h1{font-size:1rem}
 .menu-langs{display:flex;gap:18px;flex-wrap:wrap}
 .hdr-end .lang+.lang{margin-inline-start:-10px}
 .btn-wa{background:#1f8f55;color:#fff;border-color:#1f8f55}.btn-wa:hover{background:#18764a}.book-done .btn-wa{width:100%;justify-content:center;min-height:52px;font-size:1rem}
+
+/* the hotel's own offer (set in the panel) */
+.promo-bar{display:flex;align-items:center;justify-content:center;gap:6px 14px;flex-wrap:wrap;padding:9px 16px;background:var(--sea);color:#fff;text-decoration:none;font-size:.92rem;line-height:1.4;text-align:center}
+.promo-bar[hidden],.promo[hidden]{display:none}
+.promo-bar b{background:var(--gold-btn,#c9a45c);color:var(--sea);padding:2px 12px;border-radius:99px;font-weight:700;white-space:nowrap}
+.promo-bar u{text-underline-offset:3px;font-weight:600;white-space:nowrap}
+.promo{display:flex;align-items:center;gap:16px;margin:0 0 18px;padding:16px 18px;background:linear-gradient(135deg,var(--sea),#1a5a74);color:#fff;border-radius:4px}
+.promo strong{flex:0 0 auto;font:600 2.3rem/1 var(--f-head);color:#f1d9a6;white-space:nowrap}
+.promo div{display:grid;gap:2px;min-width:0}.promo b{font-size:1.05rem}.promo span{font-size:.92rem;opacity:.95}.promo small{font-size:.8rem;opacity:.8}
+.book-opts s{color:var(--muted);font-weight:400;margin-inline-end:4px}
+@media (max-width:480px){.promo{flex-direction:column;align-items:flex-start;gap:8px}.promo strong{font-size:2rem}}
+.status-out .btn{margin-top:10px}

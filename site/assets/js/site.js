@@ -80,7 +80,8 @@
           var head = d.createElement('b'); head.textContent = ok ? L.availYes : L.availNo; avail.appendChild(head);
           if (room.value && j.rooms[0]) {
             var tot = j.rooms[0].total, line = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value;
-            sum.textContent = tot ? line + ' · ' + L.est.replace('{p}', money(tot)) : line + ' · ' + L.ask; sum.hidden = false;
+            var r0 = j.rooms[0], deal = r0.base_total ? ' (' + L.ofOff.replace('{p}', r0.offer_percent) + ' · ' + L.ofWas.replace('{p}', money(r0.base_total)) + ')' : '';
+            sum.textContent = tot ? line + ' · ' + L.est.replace('{p}', money(tot)) + deal : line + ' · ' + L.ask; sum.hidden = false;
           }
           if (ok) {
             var list = j.rooms.filter(function (r) { return r.available; });
@@ -93,7 +94,9 @@
                 var li = d.createElement('li'), bt = d.createElement('button');
                 bt.type = 'button'; bt.setAttribute('data-pick', r.id);
                 var nm = d.createElement('span'), op = room.querySelector('option[value="' + r.id + '"]'); nm.textContent = op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en);
-                var pr = d.createElement('b'); pr.textContent = r.total ? money(r.total) : L.ask;
+                var pr = d.createElement('b');
+                if (r.total && r.base_total) { var was = d.createElement('s'); was.textContent = money(r.base_total); pr.appendChild(was); pr.appendChild(d.createTextNode(' ' + money(r.total))); }
+                else { pr.textContent = r.total ? money(r.total) : L.ask; }
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
               });
               avail.appendChild(ul);
@@ -331,10 +334,43 @@
           var lines = [L[j.status] || L['new'], j.ref + ' · ' + line.join(' · ')];
           if (j.total) { lines.push(L.total + ': $' + j.total); }
           show(j.status === 'confirmed' ? 'ok' : j.status === 'cancelled' ? 'bad' : 'wait', lines);
+          if (j.status === 'confirmed' && L.wa) {
+            var a = d.createElement('a'); a.className = 'btn btn-line'; a.target = '_blank'; a.rel = 'noopener';
+            a.href = 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(L.extendMsg.replace('{ref}', j.ref)); a.textContent = L.extend; out.appendChild(a);
+          }
         })
         .catch(function () { busy = false; show('bad', [L.none]); });
     });
   });
+
+  /* the hotel's own offer, when one is set in the panel: a bar above the header and a block on the booking form */
+  (function () {
+    var bar = d.querySelector('[data-promo-bar]'), boxes = d.querySelectorAll('[data-promo]');
+    var api = root.getAttribute('data-api');
+    if (!api || !window.fetch || (!bar && !boxes.length)) { return; }
+    function dm(s) { var p = s.split('-'); return p[2] + '/' + p[1]; }
+    fetch(api + 'offers', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
+      var o = j.ok && j.items && j.items[0];
+      if (!o) { return; }
+      var ar = root.lang === 'ar', title = (ar ? o.title_ar : o.title_en) || '';
+      if (bar) {
+        var B = bar.dataset, b1 = d.createElement('b'), s1 = d.createElement('span'), c1 = d.createElement('u');
+        b1.textContent = B.off.replace('{p}', o.percent);
+        s1.textContent = (title || B.lead) + ' · ' + B.dates.replace('{a}', dm(o.from)).replace('{b}', dm(o.to));
+        c1.textContent = B.cta;
+        bar.appendChild(b1); bar.appendChild(s1); bar.appendChild(c1); bar.hidden = false;
+      }
+      [].forEach.call(boxes, function (box) {
+        var L = box.closest('[data-booking]').dataset;
+        var n = d.createElement('strong'), w = d.createElement('div'), h = d.createElement('b'), p1 = d.createElement('span'), p2 = d.createElement('small');
+        n.textContent = L.ofOff.replace('{p}', o.percent);
+        h.textContent = title || L.ofLead;
+        p1.textContent = L.ofDates.replace('{a}', dm(o.from)).replace('{b}', dm(o.to)) + (o.min_nights > 1 ? ' · ' + L.ofMin.replace('{n}', o.min_nights) : '');
+        p2.textContent = L.ofNote;
+        w.appendChild(h); w.appendChild(p1); w.appendChild(p2); box.appendChild(n); box.appendChild(w); box.hidden = false;
+      });
+    }).catch(function () {});
+  })();
 
   window.RoyalInn = { scan: function () { scan(); onScroll(); } };
 })();

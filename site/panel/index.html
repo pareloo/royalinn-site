@@ -7,13 +7,14 @@
 <title>لوحة الحجوزات | رويال إن</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
-<link rel="stylesheet" href="/panel/panel.css?v=4">
-<script src="/panel/panel.js?v=4" defer></script>
+<link rel="stylesheet" href="/panel/panel.css?v=7">
+<script src="/panel/panel.js?v=7" defer></script>
 </head>
 <body>
 <header class="top">
   <img src="/assets/img/logo.svg" alt="Royal Inn" class="logo" width="150" height="38">
   <span class="title">لوحة الحجوزات</span>
+  <span class="top-date" id="top-date"></span>
   <a class="ghost help" href="/panel/help.html">؟ دليل الاستخدام</a>
   <button class="ghost" id="logout" hidden>خروج</button>
 </header>
@@ -28,30 +29,55 @@
     </form>
   </section>
 
-  <section id="app" hidden>
-    <nav class="tabs" role="tablist">
-      <button data-tab="new" class="on">طلبات جديدة <b id="c-new">0</b></button>
-      <button data-tab="active">الحجوزات القادمة</button>
-      <button data-tab="all">كل الطلبات</button>
-      <button data-tab="occupancy">الإشغال</button>
-      <button data-tab="add">+ حجز هاتفي</button>
-      <button data-tab="prices">الأسعار</button>
-      <button data-tab="closures">أيام مكتملة</button>
-      <button data-tab="inventory">عدد الغرف</button>
+  <section id="app" class="shell" hidden>
+    <nav class="tabs" role="tablist" aria-label="أقسام اللوحة">
+      <button data-tab="home" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>الرئيسية</span></button>
+      <button data-tab="new"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg><span>طلبات جديدة</span> <b id="c-new" hidden>0</b></button>
+      <button data-tab="active"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg><span>الحجوزات القادمة</span></button>
+      <button data-tab="all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span>كل الطلبات</span></button>
+      <button data-tab="occupancy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M4 14h16M9 4v16M14 4v16"/></svg><span>الإشغال</span></button>
+      <button data-tab="add"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>حجز هاتفي</span></button>
+      <span class="tabs-sep" aria-hidden="true">الإعدادات</span>
+      <button data-tab="prices"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8zM7.5 8.5h.01"/></svg><span>الأسعار</span></button>
+      <button data-tab="offers"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-1.5-3-5-3.500-5-1.500S10 7 12 7zm0 0c1.500-3 5-3.500 5-1.500S14 7 12 7z"/></svg><span>العروض والخصومات</span></button>
+      <button data-tab="closures"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3"/></svg><span>أيام مكتملة</span></button>
+      <button data-tab="inventory"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18V8M3 14h18v4M21 14v-2a3 3 0 0 0-3-3h-7v5M7 12a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg><span>عدد الغرف</span></button>
     </nav>
 
+    <div class="content">
+    <div id="view-home">
+      <div class="page-head"><h1 id="home-title">اليوم</h1><button class="ghost sm" id="home-refresh" type="button">تحديث</button></div>
+      <div id="home-alert"></div>
+      <div class="kpis" id="kpis"></div>
+      <p class="muted small" id="home-inhouse"></p>
+      <div class="cols2">
+        <div class="card"><h2>الغرف الليلة</h2><p class="muted small" id="rooms-hint"></p><div id="home-rooms"></div></div>
+        <div class="card"><h2>الأيام الـ 14 القادمة</h2><p class="muted small">عدد الغرف المحجوزة (حجوزات مؤكَّدة) في كل ليلة.</p><div class="week" id="home-week"></div></div>
+      </div>
+      <div class="cols2">
+        <div class="card"><h2>وصول اليوم</h2><div id="home-arr"></div></div>
+        <div class="card"><h2>مغادرة اليوم</h2><div id="home-dep"></div></div>
+      </div>
+      <div class="cols2">
+        <div class="card"><h2>وصول غداً</h2><div id="home-tom"></div></div>
+        <div class="card"><h2>أحدث الطلبات الجديدة</h2><div id="home-new"></div></div>
+      </div>
+    </div>
+
     <div id="view-list">
-      <div class="bar"><span id="list-title" class="muted"></span><a class="ghost" href="/api/admin/export.csv">تنزيل Excel (CSV)</a></div>
+      <div class="page-head"><h1 id="list-h">الطلبات</h1><a class="ghost sm" href="/api/admin/export.csv">تنزيل Excel (CSV)</a></div>
+      <div class="bar"><span id="list-title" class="muted"></span><input type="search" id="list-search" class="search" placeholder="بحث: اسم، هاتف، رقم الحجز" aria-label="بحث في الطلبات"></div>
       <div id="list"></div>
     </div>
 
     <div id="view-occupancy" hidden>
-      <div class="bar"><span class="muted">الأرقام: حجوزات مؤكَّدة / عدد الغرف. البرتقالي = طلبات جديدة لم تُؤكَّد. الرمادي = مغلق.</span>
-        <span><button class="ghost" id="occ-prev" type="button">‹ السابق</button> <button class="ghost" id="occ-next" type="button">التالي ›</button></span></div>
+      <div class="page-head"><h1>الإشغال</h1><span><button class="ghost sm" id="occ-prev" type="button">‹ السابق</button> <button class="ghost sm" id="occ-today" type="button">اليوم</button> <button class="ghost sm" id="occ-next" type="button">التالي ›</button></span></div>
+      <p class="legend"><span><i class="lg some"></i>محجوز</span><span><i class="lg full"></i>مكتمل</span><span><i class="lg closed"></i>مغلق</span><span><i class="lg today"></i>اليوم</span><span><sup class="nw">+1</sup> طلب جديد لم يُؤكَّد</span><span class="muted">الرقم: المحجوز / عدد الغرف</span></p>
       <div class="card scroll"><table id="occ" class="occ"></table></div>
     </div>
 
     <div id="view-add" hidden>
+      <div class="page-head"><h1>حجز هاتفي</h1></div>
       <div class="card">
         <h2>تسجيل حجز جاء بالهاتف أو في الاستقبال</h2>
         <p class="muted">يُسجَّل كحجز مؤكَّد، ويُحسب في الإشغال حتى لا يُحجز نفس المكان مرتين.</p>
@@ -71,6 +97,7 @@
     </div>
 
     <div id="view-prices" hidden>
+      <div class="page-head"><h1>الأسعار</h1></div>
       <div class="card">
         <h2>السعر الأساسي لليلة ($، شامل الضريبة)</h2>
         <p class="muted">«لشخصين+» اختياري: يُستعمل عندما يكون عدد الضيوف 2 أو أكثر. اتركه فارغاً إذا السعر واحد. اترك الكل فارغاً = «السعر عند الطلب».</p>
@@ -94,7 +121,28 @@
       <div id="rates"></div>
     </div>
 
+    <div id="view-offers" hidden>
+      <div class="page-head"><h1>العروض والخصومات</h1></div>
+      <div class="card">
+        <h2>عرض جديد</h2>
+        <p class="muted">العرض يظهر فوراً على الموقع: شريط أعلى كل الصفحات وبطاقة كبيرة فوق نموذج الحجز. الخصم يُحسب تلقائياً في السعر الذي يراه الزبون وفي مبلغ الحجز. يُطبَّق على سعر الغرفة فقط، لا على الفطور.</p>
+        <form id="offer-form" class="grid2">
+          <label>نسبة الخصم %<input type="number" name="percent" min="1" max="70" inputmode="numeric" placeholder="مثلاً 20" required></label>
+          <label>أقل عدد ليالٍ<input type="number" name="min_nights" min="1" max="30" value="1" inputmode="numeric"></label>
+          <label>الإقامة من<input type="date" name="from" required></label>
+          <label>إلى<input type="date" name="to" required></label>
+          <label>عنوان العرض بالعربية (اختياري)<input type="text" name="title_ar" maxlength="80" placeholder="مثلاً: عرض الشتاء"></label>
+          <label>العنوان بالإنجليزية (اختياري)<input type="text" name="title_en" maxlength="80" dir="ltr" placeholder="Winter offer"></label>
+          <div class="offer-preview" id="offer-preview" aria-live="polite"></div>
+          <button class="gold" type="submit">نشر العرض</button>
+        </form>
+      </div>
+      <h2 class="list-h">العروض</h2>
+      <div id="offers"></div>
+    </div>
+
     <div id="view-closures" hidden>
+      <div class="page-head"><h1>أيام مكتملة</h1></div>
       <div class="card">
         <h2>إغلاق تواريخ (الفندق مكتمل)</h2>
         <p class="muted">في هذه التواريخ يظهر للزبون على الموقع أن الغرف غير متاحة.</p>
@@ -110,11 +158,13 @@
     </div>
 
     <div id="view-inventory" hidden>
+      <div class="page-head"><h1>عدد الغرف</h1></div>
       <div class="card">
         <h2>عدد الغرف من كل نوع</h2>
-        <p class="muted">اختياري. إذا كتبت العدد، يتوقف الموقع عن قبول طلبات لهذا النوع عندما تمتلئ كل الغرف بحجوزات مؤكَّدة. اتركه فارغاً إذا لا تريد ذلك.</p>
-        <form id="inv-form"><div id="inv-rows"></div><button class="gold" type="submit">حفظ</button></form>
+        <p class="muted">اكتب كم غرفة يملك الفندق من كل نوع. بعدها يعرف الموقع متى تمتلئ الغرف ويتوقف عن عرضها، وتظهر الأعداد في الصفحة الرئيسية وفي الإشغال. الحقل الفارغ = غير محدد (الموقع يقبل الطلبات دائماً).</p>
+        <form id="inv-form"><div id="inv-rows"></div><p class="inv-total">المجموع: <b id="inv-sum">0</b> غرفة</p><button class="gold" type="submit">حفظ</button></form>
       </div>
+    </div>
     </div>
   </section>
 </main>
