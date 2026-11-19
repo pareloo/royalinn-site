@@ -193,3 +193,6 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .lg.u-free{background:#3c9a6a}.lg.u-occupied{background:#0F3D52}.lg.u-arriving{background:#B48A45}.lg.u-leaving{background:#c0532a}.lg.u-dirty{background:#8a959c}.lg.u-out{background:#444}
 .grid2 .wide{grid-column:1/-1}
 #rack-date{min-height:38px;padding:4px 10px}
+
+/* v10 */
+.ext.edit{max-width:none;display:grid;gap:0 12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));align-items:end}.ext.edit .ext-info,.ext.edit button{grid-column:1/-1;justify-self:start}

@@ -134,7 +134,7 @@ def check_dates(cin, cout):
     return (a, b), None
 
 
-def availability(con, a, b, room):
+def availability(con, a, b, room, skip=None):
     """True / False. A night is unavailable if the hotel closed it, or (when a room count is set) all rooms of that type are confirmed."""
     nights = [a + dt.timedelta(days=i) for i in range((b - a).days)]
     rows = con.execute('SELECT room, date_from, date_to FROM closures WHERE date_from < ? AND date_to >= ?', (b.isoformat(), a.isoformat())).fetchall()
@@ -149,8 +149,8 @@ def availability(con, a, b, room):
     if room:
         inv = con.execute('SELECT count FROM inventory WHERE room=?', (room,)).fetchone()
         if inv is not None:
-            booked = con.execute("SELECT check_in, check_out FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ?",
-                                 (room, b.isoformat(), a.isoformat())).fetchall()
+            booked = con.execute("SELECT check_in, check_out FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ? AND ref != ?",
+                                 (room, b.isoformat(), a.isoformat(), skip or '')).fetchall()
             for n in nights:
                 used = sum(1 for x in booked if dt.date.fromisoformat(x['check_in']) <= n < dt.date.fromisoformat(x['check_out']))
                 if used >= inv['count']:
@@ -447,6 +447,14 @@ def desk_state(con):
         if not b['arrived'] and b['check_in'] < ts and b['check_out'] >= ts:
             noshow.append(row(b))
     return S, soon, late, noshow
+
+
+def sync_inventory(con, room):
+    """Once the hotel has entered its room numbers, the room count of that type follows them (rooms out of service do not count)."""
+    n = con.execute("SELECT COUNT(*) FROM units WHERE room=?", (room,)).fetchone()[0]
+    if n:
+        live = con.execute("SELECT COUNT(*) FROM units WHERE room=? AND state!='out'", (room,)).fetchone()[0]
+        con.execute('INSERT OR REPLACE INTO inventory(room,count) VALUES(?,?)', (room, live))
 
 
 def unit_busy(con, no, a, b, skip=None):
@@ -1279,6 +1287,73 @@ class H(BaseHTTPRequestHandler):
                         con.execute('INSERT INTO agencies(name,contact,phone,email,commission,note,created) VALUES(?,?,?,?,?,?,?)', vals + (now(),))
                     load_agencies(con)
                 return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/agencies/(\d+)/delete', p)
+            if m:
+                with LOCK, db() as con:
+                    if con.execute('SELECT 1 FROM bookings WHERE agency_id=?', (int(m.group(1)),)).fetchone():
+                        return self.send(409, {'ok': False, 'error': 'has_bookings'})
+                    con.execute('DELETE FROM agency_payments WHERE agency_id=?', (int(m.group(1)),))
+                    con.execute('DELETE FROM agencies WHERE id=?', (int(m.group(1)),))
+                    load_agencies(con)
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/delete', p)
+            if m:
+                # only a cancelled booking can be removed for good (test entries, duplicates)
+                with LOCK, db() as con:
+                    cur = con.execute('SELECT status FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                    if not cur:
+                        return self.send(404, {'ok': False})
+                    if cur['status'] != 'cancelled':
+                        return self.send(409, {'ok': False, 'error': 'not_cancelled'})
+                    con.execute('DELETE FROM bookings WHERE ref=?', (m.group(1),))
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/edit', p)
+            if m:
+                # change the guest's details, dates, room type or number of guests; the total is recalculated unless one is given
+                with LOCK, db() as con:
+                    cur = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                    if not cur:
+                        return self.send(404, {'ok': False})
+                    f, t = parse_day(d.get('in')) or dt.date.fromisoformat(cur['check_in']), parse_day(d.get('out')) or dt.date.fromisoformat(cur['check_out'])
+                    name = clean(d.get('name', cur['name']), 80); phone = clean(d.get('phone', cur['phone']), 24) or '-'
+                    email = clean(d.get('email', cur['email'] or ''), 120) or None
+                    room = d.get('room', cur['room']) or None
+                    try:
+                        guests = max(1, min(12, int(d.get('guests', cur['guests']))))
+                    except (TypeError, ValueError):
+                        return self.send(400, {'ok': False, 'error': 'guests'})
+                    if len(name) < 2 or t <= f or (t - f).days > 120 or (room and room not in ROOMS) or (email and not EMAIL_RE.match(email)):
+                        return self.send(400, {'ok': False, 'error': 'fields'})
+                    bf = 1 if d.get('breakfast', bool(cur['breakfast'])) else 0
+                    stay_changed = (f.isoformat(), t.isoformat(), room, guests, bf) != (cur['check_in'], cur['check_out'], cur['room'], cur['guests'], cur['breakfast'])
+                    free = True
+                    if stay_changed and cur['status'] == 'confirmed':
+                        free = availability(con, f, t, room, cur['ref'])
+                    try:
+                        total = int(d['total']) if d.get('total') not in (None, '') else None
+                    except (TypeError, ValueError):
+                        return self.send(400, {'ok': False, 'error': 'total'})
+                    if total is None:
+                        total = cur['total']
+                        if stay_changed:
+                            total = None
+                            if room:
+                                ns = [f + dt.timedelta(days=i) for i in range((t - f).days)]
+                                per, _pct = discounted(con, nightly(con, room, guests, ns), ns)
+                                if not any(x is None for x in per):
+                                    total = sum(per) + (BREAKFAST * guests * len(per) if bf else 0) + (cur['late_fee'] or 0)
+                    res = {'ok': True, 'total': total, 'old_total': cur['total'], 'available': free, 'nights': (t - f).days}
+                    if d.get('preview'):
+                        return self.send(200, res)
+                    if not free and not d.get('force'):
+                        return self.send(409, dict(res, ok=False, error='full'))
+                    room_no = cur['room_no']
+                    if room_no and stay_changed and unit_busy(con, room_no, f.isoformat(), t.isoformat(), cur['ref']):
+                        room_no = None        # the numbered room is taken on the new dates; the desk picks another
+                    con.execute('UPDATE bookings SET name=?, phone=?, email=?, check_in=?, check_out=?, nights=?, guests=?, room=?, breakfast=?, total=?, net=?, room_no=?, updated=? WHERE ref=?',
+                                (name, phone, email, f.isoformat(), t.isoformat(), (t - f).days, guests, room, bf, total, net_of(con, total, cur['agency_id']), room_no, now(), m.group(1)))
+                    r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                return self.send(200, dict(res, item=row(r), room_no_cleared=bool(cur['room_no'] and not room_no)))
             m = re.fullmatch(r'/api/admin/agencies/(\d+)/payment', p)
             if m:
                 day = parse_day(d.get('date')) or dt.date.today()
@@ -1378,12 +1453,18 @@ class H(BaseHTTPRequestHandler):
                     for x in nos:
                         if not con.execute('SELECT 1 FROM units WHERE no=?', (x,)).fetchone():
                             con.execute('INSERT INTO units(no,room,floor) VALUES(?,?,?)', (x, room, clean(d.get('floor'), 12) or None)); added += 1
+                    sync_inventory(con, room)
                 return self.send(200, {'ok': True, 'added': added, 'skipped': len(nos) - added})
             m = re.fullmatch(r'/api/admin/units/(\d+)(/delete)?', p)
             if m:
-                with db() as con:
+                with LOCK, db() as con:
+                    u0 = con.execute('SELECT room FROM units WHERE id=?', (int(m.group(1)),)).fetchone()
+                    if not u0:
+                        return self.send(404, {'ok': False})
                     if m.group(2):
                         con.execute('DELETE FROM units WHERE id=?', (int(m.group(1)),))
+                        if not con.execute('SELECT 1 FROM units WHERE room=?', (u0['room'],)).fetchone():
+                            con.execute('DELETE FROM inventory WHERE room=?', (u0['room'],))
                     else:
                         if d.get('state') in ('clean', 'dirty', 'out'):
                             con.execute('UPDATE units SET state=? WHERE id=?', (d['state'], int(m.group(1))))
@@ -1391,6 +1472,8 @@ class H(BaseHTTPRequestHandler):
                             con.execute('UPDATE units SET room=? WHERE id=?', (d['room'], int(m.group(1))))
                         if 'note' in d:
                             con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))
+                    for rm in {u0['room'], d.get('room')} & set(ROOMS):
+                        sync_inventory(con, rm)
                 return self.send(200, {'ok': True})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/late', p)
             if m:

@@ -203,7 +203,7 @@
   /* ---------------------------------------------------------------- booking lists */
   var agLoaded = false;
   function loadList() {
-    (agLoaded ? Promise.resolve() : agencies()).then(function () { return api('bookings?status=' + tab); }).then(function (j) {
+    (agLoaded ? Promise.resolve() : agencies()).then(function () { return ROOMS.length ? null : rooms(); }).then(function () { return api('bookings?status=' + tab); }).then(function (j) {
       if (gone(j) || !j.items) return;
       badge((j.counts && j.counts['new']) || 0);
       ITEMS = j.items;
@@ -335,6 +335,39 @@
       if (!b.arrived && b.check_in <= today) act.appendChild(flag('تسجيل الوصول', 'gold', { arrived: true }, 'تم تسجيل وصول الضيف'));
       if (b.arrived && !b.departed) act.appendChild(flag('تسجيل المغادرة', 'ghost', { departed: true }, 'تم تسجيل المغادرة'));
       if (!b.departed) { var eb = el('button', 'ghost', 'تمديد / تعديل المغادرة'); eb.type = 'button'; eb.addEventListener('click', function () { ext.hidden = !ext.hidden; }); act.appendChild(eb); }
+    }
+    // edit the booking itself: guest, dates, room type, guests, breakfast, amount
+    if (b.status !== 'cancelled') {
+      var ed = el('form', 'ext edit'); ed.hidden = true;
+      var F = {};
+      [['name', 'الاسم', 'text', b.name], ['phone', 'الهاتف', 'tel', b.phone === '-' ? '' : b.phone], ['email', 'البريد', 'email', b.email || ''], ['in', 'الوصول', 'date', b.check_in], ['out', 'المغادرة', 'date', b.check_out],
+       ['guests', 'الضيوف', 'number', b.guests], ['total', 'المبلغ $ (فارغ = يُحسب تلقائياً)', 'number', '']].forEach(function (x) {
+        var l = el('label', null, x[1]), i = el('input'); i.type = x[2]; i.value = x[3]; if (x[2] !== 'text') i.dir = 'ltr'; if (x[0] === 'guests') { i.min = 1; i.max = 12; } F[x[0]] = i; l.appendChild(i); ed.appendChild(l);
+      });
+      var lr = el('label', null, 'نوع الغرفة'), rs = el('select'); var o1 = el('option', null, 'غير محدد'); o1.value = ''; rs.appendChild(o1);
+      ROOMS.forEach(function (r) { var o = el('option', null, r.name); o.value = r.id; rs.appendChild(o); }); rs.value = b.room || ''; lr.appendChild(rs); ed.appendChild(lr);
+      var lb = el('label', 'inline'), cb = el('input'); cb.type = 'checkbox'; cb.checked = b.breakfast; lb.appendChild(cb); lb.appendChild(document.createTextNode(' مع الفطور')); ed.appendChild(lb);
+      var einfo = el('p', 'ext-info', 'عدّل ما تريد ثم اضغط «حفظ التعديل». المبلغ يُعاد حسابه إذا تغيّرت التواريخ أو الغرفة أو عدد الضيوف.'); ed.appendChild(einfo);
+      var esv = el('button', 'gold', 'حفظ التعديل'); esv.type = 'submit'; ed.appendChild(esv);
+      ed.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        if (F.out.value <= F['in'].value) { toast('تاريخ المغادرة يجب أن يكون بعد تاريخ الوصول'); return; }
+        var data = { name: F.name.value, phone: F.phone.value, email: F.email.value, 'in': F['in'].value, out: F.out.value, guests: F.guests.value, total: F.total.value, room: rs.value, breakfast: cb.checked };
+        data.preview = true;
+        api('bookings/' + b.ref + '/edit', data).then(function (j) {
+          if (gone(j)) return; if (!j.ok) { toast('تحقّق من الاسم والتواريخ والبريد'); return; }
+          var q = 'حفظ التعديل؟' + (j.total !== j.old_total ? '\nالمبلغ: ' + (j.old_total == null ? 'غير محدد' : '$' + j.old_total) + ' ← ' + (j.total == null ? 'يُحدَّد من الفندق' : '$' + j.total) : '') + (j.available ? '' : '\nتنبيه: الغرف من هذا النوع مكتملة أو التواريخ مغلقة.');
+          if (!confirm(q)) return;
+          data.preview = false; data.force = !j.available;
+          api('bookings/' + b.ref + '/edit', data).then(function (k) { if (k.ok) { toast(k.room_no_cleared ? 'تم الحفظ. رقم الغرفة السابق محجوز في التواريخ الجديدة، اختر رقماً آخر.' : 'تم حفظ التعديل'); loadList(); } else if (!gone(k)) toast('لم يتم الحفظ'); });
+        });
+      });
+      body.appendChild(ed);
+      var eb2 = el('button', 'ghost', 'تعديل الحجز'); eb2.type = 'button'; eb2.addEventListener('click', function () { ed.hidden = !ed.hidden; }); act.appendChild(eb2);
+    } else {
+      var del = el('button', 'ghost danger', 'حذف نهائي'); del.type = 'button';
+      del.addEventListener('click', function () { if (!confirm('حذف الحجز ' + b.ref + ' (' + b.name + ') نهائياً؟ لا يمكن التراجع.')) return; api('bookings/' + b.ref + '/delete', {}).then(function (j) { if (j.ok) { toast('تم الحذف'); loadList(); } else if (!gone(j)) toast('لم يتم الحذف'); }); });
+      act.appendChild(del);
     }
     var save = el('button', 'ghost', b.status === 'confirmed' ? 'حفظ' : 'حفظ الملاحظة'); save.type = 'button';
     save.addEventListener('click', function () { update(b.ref, null, note.value, roomNo ? { room_no: roomNo.value, paid: paid.value, agency_id: agSel.value, pay_by: paySel.value } : null); });
@@ -598,6 +631,10 @@
         r.appendChild(d); pb.appendChild(r);
       });
       $('#pay-form').date.value = $('#pay-form').date.value || iso(new Date());
+      $('#ag-del').onclick = function () {
+        if (!confirm('حذف الوكالة «' + a.name + '» مع دفعاتها المسجَّلة؟')) return;
+        api('agencies/' + id + '/delete', {}).then(function (k) { if (k.ok) { toast('تم حذف الوكالة'); agOpen = null; agLoaded = false; loadAgencies(); } else if (!gone(k)) toast(k.error === 'has_bookings' ? 'لا يمكن الحذف: توجد حجوزات مسجَّلة على هذه الوكالة.' : 'لم يتم الحذف'); });
+      };
       $('#ag-edit').onclick = function () {
         var f = $('#ag-form'); f.id.value = a.id; f.name.value = a.name; f.commission.value = a.commission; f.contact.value = a.contact || ''; f.phone.value = a.phone || ''; f.email.value = a.email || ''; f.note.value = a.note || '';
         $('#ag-form-title').textContent = 'تعديل: ' + a.name; agOpen = null; $('#ag-detail').hidden = true; $('#ag-list-view').hidden = false; window.scrollTo(0, 0);
