@@ -7,8 +7,8 @@
 <title>لوحة الحجوزات | رويال إن</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
-<link rel="stylesheet" href="/panel/panel.css?v=7">
-<script src="/panel/panel.js?v=7" defer></script>
+<link rel="stylesheet" href="/panel/panel.css?v=8">
+<script src="/panel/panel.js?v=8" defer></script>
 </head>
 <body>
 <header class="top">
@@ -36,7 +36,8 @@
       <button data-tab="active"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg><span>الحجوزات القادمة</span></button>
       <button data-tab="all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span>كل الطلبات</span></button>
       <button data-tab="occupancy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M4 14h16M9 4v16M14 4v16"/></svg><span>الإشغال</span></button>
-      <button data-tab="add"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>حجز هاتفي</span></button>
+      <button data-tab="add"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>حجز جديد</span></button>
+      <button data-tab="agencies"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20V8l6-4v16M9 20V10h12v10M3 20h18M13 14h.01M17 14h.01M13 17h.01M17 17h.01"/></svg><span>الوكالات والحسابات</span></button>
       <span class="tabs-sep" aria-hidden="true">الإعدادات</span>
       <button data-tab="prices"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8zM7.5 8.5h.01"/></svg><span>الأسعار</span></button>
       <button data-tab="offers"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-1.5-3-5-3.500-5-1.500S10 7 12 7zm0 0c1.500-3 5-3.500 5-1.500S14 7 12 7z"/></svg><span>العروض والخصومات</span></button>
@@ -73,13 +74,16 @@
     <div id="view-occupancy" hidden>
       <div class="page-head"><h1>الإشغال</h1><span><button class="ghost sm" id="occ-prev" type="button">‹ السابق</button> <button class="ghost sm" id="occ-today" type="button">اليوم</button> <button class="ghost sm" id="occ-next" type="button">التالي ›</button></span></div>
       <p class="legend"><span><i class="lg some"></i>محجوز</span><span><i class="lg full"></i>مكتمل</span><span><i class="lg closed"></i>مغلق</span><span><i class="lg today"></i>اليوم</span><span><sup class="nw">+1</sup> طلب جديد لم يُؤكَّد</span><span class="muted">الرقم: المحجوز / عدد الغرف</span></p>
+      <p class="muted small">اضغط على أي يوم في رأس الجدول لترى من يصل، من يغادر ومن يقيم في ذلك اليوم.</p>
       <div class="card scroll"><table id="occ" class="occ"></table></div>
+      <div class="card" id="day-box" hidden><div class="page-head"><h2 id="day-title"></h2><button class="ghost sm" id="day-close" type="button">إغلاق</button></div>
+        <div class="cols3"><div><h3>الوصول</h3><div id="day-arr"></div></div><div><h3>المغادرة</h3><div id="day-dep"></div></div><div><h3>المقيمون</h3><div id="day-stay"></div></div></div></div>
     </div>
 
     <div id="view-add" hidden>
-      <div class="page-head"><h1>حجز هاتفي</h1></div>
+      <div class="page-head"><h1>حجز جديد</h1></div>
       <div class="card">
-        <h2>تسجيل حجز جاء بالهاتف أو في الاستقبال</h2>
+        <h2>تسجيل حجز جاء بالهاتف، في الاستقبال، من وكالة أو بتوصية</h2>
         <p class="muted">يُسجَّل كحجز مؤكَّد، ويُحسب في الإشغال حتى لا يُحجز نفس المكان مرتين.</p>
         <form id="add-form" class="grid2">
           <label>الاسم<input type="text" name="name" maxlength="80" required></label>
@@ -90,14 +94,60 @@
           <label>الضيوف<input type="number" name="guests" min="1" max="12" value="2"></label>
           <label>المبلغ الإجمالي $ (اختياري)<input type="number" name="total" min="0" placeholder="يُحسب تلقائياً"></label>
           <label>ملاحظة<input type="text" name="note" maxlength="400"></label>
+          <label>كيف جاء الحجز؟<select name="source"><option value="desk">في الاستقبال</option><option value="phone">بالهاتف</option><option value="agency">عن طريق وكالة</option><option value="referral">عن طريق شخص (توصية)</option></select></label>
+          <label data-if="agency" hidden>الوكالة<select name="agency_id" class="agency-select"><option value="">اختر الوكالة</option></select></label>
+          <label data-if="agency" hidden>من يدفع للفندق؟<select name="pay_by"><option value="agency">الوكالة (تُسجَّل في حسابها)</option><option value="guest">الضيف في الفندق (للوكالة عمولة)</option></select></label>
+          <label data-if="referral" hidden>اسم الشخص الذي أرسل الضيف<input type="text" name="referrer" maxlength="80"></label>
+          <label>لغة رسالة التأكيد<select name="lang"><option value="ar">العربية</option><option value="en">English</option></select></label>
           <label class="inline"><input type="checkbox" name="breakfast"> مع الفطور</label>
           <button class="gold" type="submit">حفظ الحجز</button>
         </form>
       </div>
     </div>
 
+    <div id="view-agencies" hidden>
+      <div class="page-head"><h1>الوكالات والحسابات</h1></div>
+      <div id="ag-list-view">
+        <div class="card">
+          <h2 id="ag-form-title">وكالة جديدة</h2>
+          <p class="muted">سجّل هنا كل وكالة سفر أو شركة ترسل ضيوفاً. العمولة هي النسبة التي تأخذها الوكالة من سعر الغرفة. بعدها اختر الوكالة عند تسجيل الحجز، والنظام يحسب حسابها تلقائياً.</p>
+          <form id="ag-form" class="grid2">
+            <input type="hidden" name="id">
+            <label>اسم الوكالة<input type="text" name="name" maxlength="80" required></label>
+            <label>العمولة %<input type="number" name="commission" min="0" max="50" value="10" inputmode="numeric"></label>
+            <label>اسم المسؤول (اختياري)<input type="text" name="contact" maxlength="80"></label>
+            <label>الهاتف (اختياري)<input type="tel" name="phone" maxlength="24" dir="ltr"></label>
+            <label>البريد (اختياري)<input type="email" name="email" maxlength="120" dir="ltr"></label>
+            <label>ملاحظة (اختياري)<input type="text" name="note" maxlength="300"></label>
+            <button class="gold" type="submit">حفظ الوكالة</button>
+          </form>
+        </div>
+        <div id="agencies"></div>
+      </div>
+      <div id="ag-detail" hidden>
+        <p><button class="ghost sm" id="ag-back" type="button">‹ كل الوكالات</button></p>
+        <div class="card">
+          <div class="page-head"><h2 id="ag-name"></h2><span><a class="ghost sm" id="ag-statement" target="_blank" rel="noopener">كشف الحساب (طباعة / PDF)</a> <a class="ghost sm" id="ag-prices" target="_blank" rel="noopener">قائمة أسعار الوكالة</a> <button class="ghost sm" id="ag-edit" type="button">تعديل</button></span></div>
+          <p class="muted" id="ag-info"></p>
+          <div class="kpis" id="ag-kpis"></div>
+          <p class="muted small">الحساب يُحسب من الحجوزات المؤكَّدة فقط. «المستحق على الوكالة» = حجوزات تدفعها الوكالة، بعد خصم عمولتها. «عمولة للوكالة» = حجوزات دفعها الضيف في الفندق.</p>
+        </div>
+        <div class="card">
+          <h2>تسجيل دفعة من الوكالة</h2>
+          <form id="pay-form" class="row">
+            <label>المبلغ $<input type="number" name="amount" min="1" inputmode="numeric" required></label>
+            <label>التاريخ<input type="date" name="date" required></label>
+            <label class="grow">ملاحظة<input type="text" name="note" maxlength="200" placeholder="مثلاً: نقداً، حوالة"></label>
+            <button class="gold" type="submit">حفظ الدفعة</button>
+          </form>
+          <div id="ag-pays"></div>
+        </div>
+        <div class="card"><h2>حجوزات الوكالة</h2><div class="scroll"><table class="ptable ledger" id="ag-bookings"></table></div></div>
+      </div>
+    </div>
+
     <div id="view-prices" hidden>
-      <div class="page-head"><h1>الأسعار</h1></div>
+      <div class="page-head"><h1>الأسعار</h1><a class="ghost sm" href="/api/pricelist" target="_blank" rel="noopener">قائمة الأسعار (طباعة / PDF)</a></div>
       <div class="card">
         <h2>السعر الأساسي لليلة ($، شامل الضريبة)</h2>
         <p class="muted">«لشخصين+» اختياري: يُستعمل عندما يكون عدد الضيوف 2 أو أكثر. اتركه فارغاً إذا السعر واحد. اترك الكل فارغاً = «السعر عند الطلب».</p>

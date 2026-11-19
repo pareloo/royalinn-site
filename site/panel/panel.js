@@ -3,7 +3,7 @@
   'use strict';
   var $ = function (s) { return document.querySelector(s); };
   var each = function (sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn); };
-  var tab = 'home', ROOMS = [], ITEMS = [];
+  var tab = 'home', ROOMS = [], ITEMS = [], AGS = [];
   var LABEL = { 'new': 'جديد', confirmed: 'مؤكَّد', cancelled: 'ملغى' };
   var DAYS = ['أحد', 'إثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت'];
   var DAYS_LONG = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -57,9 +57,9 @@
   function load() {
     var list = tab === 'new' || tab === 'active' || tab === 'all';
     $('#view-list').hidden = !list;
-    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
+    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
     if (list) loadList(); else if (tab === 'home') loadHome(); else if (tab === 'closures') loadClosures(); else if (tab === 'inventory') loadInventory();
-    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') rooms(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers();
+    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers();
   }
 
   // the count of waiting requests shows on the menu and in the browser tab title, on every screen
@@ -79,6 +79,7 @@
       var r = el('div', 'mini');
       r.appendChild(el('b', null, b.name));
       var sub = what === 'new' ? fmt(b.check_in) + ' ← ' + fmt(b.check_out) + ' · ' + b.room_name : b.room_name + ' · ' + b.nights + ' ليالٍ · ' + b.guests + ' ضيوف';
+      if (b.status === 'new') sub += ' · لم يُؤكَّد بعد'; if (b.room_no) sub += ' · غرفة ' + b.room_no; if (b.agency_name) sub += ' · ' + b.agency_name;
       r.appendChild(el('span', 'm-sub', sub));
       if (b.phone) { var a = el('a', 'btn ghost', 'اتصال'); a.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); r.appendChild(a); }
       box.appendChild(r);
@@ -137,8 +138,9 @@
   $('#home-refresh').addEventListener('click', function () { loadHome(); toast('تم التحديث'); });
 
   /* ---------------------------------------------------------------- booking lists */
+  var agLoaded = false;
   function loadList() {
-    api('bookings?status=' + tab).then(function (j) {
+    (agLoaded ? Promise.resolve() : agencies()).then(function () { return api('bookings?status=' + tab); }).then(function (j) {
       if (gone(j) || !j.items) return;
       badge((j.counts && j.counts['new']) || 0);
       ITEMS = j.items;
@@ -179,7 +181,7 @@
     body.appendChild(stay);
 
     var dl = el('dl', 'facts');
-    [['الغرفة', b.room_name], ['الفطور', b.breakfast ? 'نعم' : 'لا'], ['المصدر', b.source === 'desk' ? 'هاتف / استقبال' : 'الموقع'],
+    [['الغرفة', b.room_name], ['الفطور', b.breakfast ? 'نعم' : 'لا'], ['المصدر', b.source_name + (b.agency_name ? ': ' + b.agency_name + (b.pay_by === 'agency' ? ' (تدفع الوكالة' + (b.net != null ? ' $' + b.net : '') + ')' : ' (يدفع الضيف)') : '') + (b.referrer ? ': ' + b.referrer : '')],
      ['الهاتف', b.phone || '-'], ['البريد', b.email || '-'], ['وصل الطلب (UTC)', b.created.replace('T', ' ').slice(0, 16)]].forEach(function (f) {
       var w = el('div'); w.appendChild(el('dt', null, f[0])); var dd = el('dd', null, String(f[1]));
       if (f[0] === 'الهاتف' || f[0] === 'البريد' || f[0].indexOf('UTC') !== -1) dd.dir = 'ltr';
@@ -193,11 +195,14 @@
     body.appendChild(note);
 
     // front desk: room number, amount paid, arrival and departure, extending the stay
-    var roomNo = null, paid = null, ext = null;
+    var roomNo = null, paid = null, ext = null, agSel = null, paySel = null;
     if (b.status === 'confirmed') {
       var desk = el('div', 'desk');
       var l1 = el('label', null, 'رقم الغرفة'); roomNo = el('input'); roomNo.type = 'text'; roomNo.maxLength = 12; roomNo.value = b.room_no || ''; roomNo.dir = 'ltr'; l1.appendChild(roomNo); desk.appendChild(l1);
       var l2 = el('label', null, 'المدفوع $'); paid = el('input'); paid.type = 'number'; paid.min = 0; paid.inputMode = 'numeric'; paid.value = b.paid == null ? '' : b.paid; l2.appendChild(paid); desk.appendChild(l2);
+      var l4 = el('label', null, 'الوكالة'); agSel = el('select'); var o0 = el('option', null, 'بدون وكالة'); o0.value = ''; agSel.appendChild(o0);
+      AGS.forEach(function (a) { var o = el('option', null, a.name); o.value = a.id; agSel.appendChild(o); }); agSel.value = b.agency_id || ''; l4.appendChild(agSel); desk.appendChild(l4);
+      var l5 = el('label', null, 'من يدفع؟'); paySel = el('select'); [['guest', 'الضيف'], ['agency', 'الوكالة']].forEach(function (x) { var o = el('option', null, x[1]); o.value = x[0]; paySel.appendChild(o); }); paySel.value = b.pay_by === 'agency' ? 'agency' : 'guest'; l5.appendChild(paySel); desk.appendChild(l5);
       body.appendChild(desk);
       ext = el('div', 'ext'); ext.hidden = true;
       var l3 = el('label', null, 'تاريخ المغادرة الجديد'), nd = el('input'); nd.type = 'date'; nd.min = iso(new Date(day(b.check_in).getTime() + 864e5)); nd.value = b.check_out; l3.appendChild(nd); ext.appendChild(l3);
@@ -263,7 +268,7 @@
       if (!b.departed) { var eb = el('button', 'ghost', 'تمديد / تعديل المغادرة'); eb.type = 'button'; eb.addEventListener('click', function () { ext.hidden = !ext.hidden; }); act.appendChild(eb); }
     }
     var save = el('button', 'ghost', b.status === 'confirmed' ? 'حفظ' : 'حفظ الملاحظة'); save.type = 'button';
-    save.addEventListener('click', function () { update(b.ref, null, note.value, roomNo ? { room_no: roomNo.value, paid: paid.value } : null); });
+    save.addEventListener('click', function () { update(b.ref, null, note.value, roomNo ? { room_no: roomNo.value, paid: paid.value, agency_id: agSel.value, pay_by: paySel.value } : null); });
     act.appendChild(save);
     body.appendChild(act);
     c.appendChild(body);
@@ -362,7 +367,8 @@
       j.dates.forEach(function (ds) {
         var p = ds.split('-'), dd = day(ds);
         var th = el('th', (dd.getDay() === 5 || dd.getDay() === 6 ? 'we' : '') + (ds === today ? ' today' : ''));
-        th.appendChild(el('span', 'dn', DAYS[dd.getDay()])); th.appendChild(el('span', null, p[2] + '/' + p[1])); hr.appendChild(th);
+        th.appendChild(el('span', 'dn', DAYS[dd.getDay()])); th.appendChild(el('span', null, p[2] + '/' + p[1])); th.classList.add('pick'); th.tabIndex = 0; th.setAttribute('role', 'button');
+        th.addEventListener('click', function () { loadDay(ds); }); th.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') loadDay(ds); }); hr.appendChild(th);
       });
       t.appendChild(hr);
       j.rows.forEach(function (r) {
@@ -386,17 +392,106 @@
       t.appendChild(sr);
     });
   }
+  function loadDay(ds) {
+    api('day?date=' + ds).then(function (j) {
+      if (gone(j) || !j.ok) return;
+      $('#day-title').textContent = longDate(j.date);
+      mini($('#day-arr'), j.arrivals, 'لا وصول في هذا اليوم.'); mini($('#day-dep'), j.departures, 'لا مغادرة في هذا اليوم.'); mini($('#day-stay'), j.staying, 'لا مقيمين.');
+      $('#day-box').hidden = false; try { $('#day-box').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+    });
+  }
+  $('#day-close').addEventListener('click', function () { $('#day-box').hidden = true; });
   $('#occ-prev').addEventListener('click', function () { occFrom.setDate(occFrom.getDate() - 30); loadOcc(); });
   $('#occ-next').addEventListener('click', function () { occFrom.setDate(occFrom.getDate() + 30); loadOcc(); });
   $('#occ-today').addEventListener('click', function () { occFrom = new Date(); loadOcc(); });
 
   /* ---------------------------------------------------------------- desk booking */
+  function srcFields() { var v = $('#add-form').source.value; each('#add-form [data-if]', function (x) { x.hidden = x.getAttribute('data-if') !== v; }); }
+  $('#add-form').source.addEventListener('change', srcFields);
   $('#add-form').addEventListener('submit', function (e) {
     e.preventDefault(); var f = e.target;
+    if (f.source.value === 'agency' && !f.agency_id.value) { toast('اختر الوكالة، أو أضفها أولاً من «الوكالات والحسابات»'); return; }
     if (f.out.value <= f['in'].value) { toast('تاريخ المغادرة يجب أن يكون بعد تاريخ الوصول'); return; }
     api('bookings/new', { name: f.name.value, phone: f.phone.value, 'in': f['in'].value, out: f.out.value, room: f.room.value,
-      guests: f.guests.value, total: f.total.value, note: f.note.value, breakfast: f.breakfast.checked }).then(function (j) {
-      if (j.ok) { f.reset(); toast('تم حفظ الحجز ' + j.ref); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
+      guests: f.guests.value, total: f.total.value, note: f.note.value, breakfast: f.breakfast.checked, source: f.source.value,
+      agency_id: f.agency_id.value, pay_by: f.pay_by.value, referrer: f.referrer.value, lang: f.lang.value }).then(function (j) {
+      if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
+    });
+  });
+
+  /* ---------------------------------------------------------------- agencies and their accounts */
+  var agOpen = null;
+  function agencies() {
+    return api('agencies').then(function (j) {
+      AGS = j.items || AGS; if (j.items) agLoaded = true;
+      each('.agency-select', function (sel) { var v = sel.value; while (sel.options.length > 1) sel.remove(1); AGS.forEach(function (a) { var o = el('option', null, a.name + ' (' + a.commission + '%)'); o.value = a.id; sel.appendChild(o); }); sel.value = v; });
+      return j;
+    });
+  }
+  function money(n) { return (n < 0 ? '−' : '') + '$' + Math.abs(n); }
+  function loadAgencies() {
+    if (agOpen) return openAgency(agOpen);
+    $('#ag-detail').hidden = true; $('#ag-list-view').hidden = false;
+    agencies().then(function (j) {
+      if (gone(j)) return;
+      var box = $('#agencies'); box.textContent = '';
+      if (!AGS.length) { box.appendChild(el('p', 'empty', 'لا توجد وكالات بعد. أضف أول وكالة من النموذج أعلاه.')); return; }
+      AGS.forEach(function (a) {
+        var c = el('div', 'card closure');
+        c.appendChild(el('strong', null, a.name));
+        c.appendChild(el('span', 'muted', 'عمولة ' + a.commission + '% · ' + a.bookings + ' حجوزات مؤكَّدة · مبيعات ' + money(a.sales)));
+        c.appendChild(el('span', a.balance > 0 ? 'due' : 'paidok', a.balance > 0 ? 'عليها ' + money(a.balance) : a.balance < 0 ? 'لها رصيد ' + money(-a.balance) : 'لا رصيد مستحق'));
+        var b = el('button', 'ghost', 'فتح الحساب'); b.type = 'button'; b.addEventListener('click', function () { openAgency(a.id); }); c.appendChild(b);
+        box.appendChild(c);
+      });
+    });
+  }
+  function openAgency(id) {
+    agOpen = id;
+    api('agencies/' + id).then(function (j) {
+      if (gone(j)) return;
+      if (!j.ok) { agOpen = null; return loadAgencies(); }
+      var a = j.agency, s = j.sums;
+      $('#ag-list-view').hidden = true; $('#ag-detail').hidden = false;
+      $('#ag-name').textContent = a.name;
+      $('#ag-info').textContent = ['عمولة ' + a.commission + '%', a.contact, a.phone, a.email, a.note].filter(Boolean).join(' · ');
+      $('#ag-statement').href = '/api/admin/agencies/' + id + '/statement'; $('#ag-prices').href = j.pricelist;
+      var k = $('#ag-kpis'); k.textContent = '';
+      k.appendChild(kpi(s.bookings, 'حجوزات مؤكَّدة')); k.appendChild(kpi(money(s.sales), 'إجمالي المبيعات')); k.appendChild(kpi(money(s.due), 'المستحق على الوكالة'));
+      k.appendChild(kpi(money(s.paid), 'دفعت الوكالة')); k.appendChild(kpi(money(Math.abs(s.balance)), s.balance >= 0 ? 'الرصيد المتبقي عليها' : 'رصيد لها', s.balance > 0 ? 'warn' : 'gold')); k.appendChild(kpi(money(s.commission_owed), 'عمولة للوكالة'));
+      var t = $('#ag-bookings'); t.textContent = '';
+      var hr = el('tr'); ['الرقم', 'الضيف', 'الوصول', 'المغادرة', 'الإجمالي', 'الدافع', 'المستحق', 'العمولة'].forEach(function (h) { hr.appendChild(el('th', null, h)); }); t.appendChild(hr);
+      if (!j.bookings.length) { var e0 = el('tr'), td0 = el('td', 'empty', 'لا توجد حجوزات مؤكَّدة لهذه الوكالة.'); td0.colSpan = 8; e0.appendChild(td0); t.appendChild(e0); }
+      j.bookings.forEach(function (b) {
+        var tot = b.total || 0, nt = b.net == null ? tot : b.net, ag = b.pay_by === 'agency', tr = el('tr');
+        [b.ref, b.name, fmt(b.check_in), fmt(b.check_out), '$' + tot, ag ? 'الوكالة' : 'الضيف', ag ? '$' + nt : '—', ag ? '—' : '$' + (tot - nt)].forEach(function (v) { tr.appendChild(el('td', null, v)); });
+        t.appendChild(tr);
+      });
+      var pb = $('#ag-pays'); pb.textContent = '';
+      j.payments.forEach(function (x) {
+        var r = el('div', 'mini'); r.appendChild(el('b', null, '$' + x.amount)); r.appendChild(el('span', 'm-sub', fmt(x.date) + (x.note ? ' · ' + x.note : '')));
+        var d = el('button', 'ghost danger', 'حذف'); d.type = 'button'; d.className += ' btn';
+        d.addEventListener('click', function () { if (!confirm('حذف هذه الدفعة ($' + x.amount + ')؟')) return; api('agency-payments/' + x.id + '/delete', {}).then(function () { toast('تم الحذف'); openAgency(id); }); });
+        r.appendChild(d); pb.appendChild(r);
+      });
+      $('#pay-form').date.value = $('#pay-form').date.value || iso(new Date());
+      $('#ag-edit').onclick = function () {
+        var f = $('#ag-form'); f.id.value = a.id; f.name.value = a.name; f.commission.value = a.commission; f.contact.value = a.contact || ''; f.phone.value = a.phone || ''; f.email.value = a.email || ''; f.note.value = a.note || '';
+        $('#ag-form-title').textContent = 'تعديل: ' + a.name; agOpen = null; $('#ag-detail').hidden = true; $('#ag-list-view').hidden = false; window.scrollTo(0, 0);
+      };
+    });
+  }
+  $('#ag-back').addEventListener('click', function () { agOpen = null; loadAgencies(); });
+  $('#ag-form').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target;
+    api('agencies' + (f.id.value ? '/' + f.id.value : ''), { name: f.name.value, commission: f.commission.value, contact: f.contact.value, phone: f.phone.value, email: f.email.value, note: f.note.value }).then(function (j) {
+      if (j.ok) { f.reset(); f.id.value = ''; $('#ag-form-title').textContent = 'وكالة جديدة'; toast('تم حفظ الوكالة'); loadAgencies(); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والعمولة (0 إلى 50)');
+    });
+  });
+  $('#pay-form').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target; if (!agOpen) return;
+    api('agencies/' + agOpen + '/payment', { amount: f.amount.value, date: f.date.value, note: f.note.value }).then(function (j) {
+      if (j.ok) { f.amount.value = ''; f.note.value = ''; toast('تم تسجيل الدفعة'); openAgency(agOpen); } else if (!gone(j) && j.status) toast('تحقّق من المبلغ');
     });
   });
 

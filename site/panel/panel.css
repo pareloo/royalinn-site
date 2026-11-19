@@ -166,3 +166,14 @@ a.ghost.sm{min-height:38px;padding:5px 14px}
 .ext{background:var(--foam);border-radius:12px;padding:14px 16px;margin:6px 0 12px;display:grid;gap:8px;max-width:520px}
 .ext label{margin:0}.ext-info{margin:0;font-weight:700;color:var(--deep)}.ext-info.warn{color:var(--red)}
 button:disabled{opacity:.5;cursor:not-allowed}
+
+/* v8: agencies, ledger, day detail */
+.cols3{display:grid;gap:0 18px}@media (min-width:820px){.cols3{grid-template-columns:1fr 1fr 1fr}}
+.cols3 h3{margin:6px 0 2px;font-size:.95rem;color:var(--brand,#0F3D52)}
+.occ th.pick{cursor:pointer}.occ th.pick:hover,.occ th.pick:focus{background:#EEF5F6;outline:0;box-shadow:inset 0 -3px 0 #B48A45}
+.ledger{width:100%;min-width:640px}.ledger th,.ledger td{padding:8px 10px;text-align:start;border-bottom:1px solid var(--line,#e4ddd0);white-space:nowrap}
+.ledger th{font-size:.84rem;color:var(--muted,#64727b);font-weight:700}
+.closure .due,.closure .paidok{font-weight:700;font-size:.9rem}.closure .due{color:#a8481f}.closure .paidok{color:#1b6240}
+.kpi.warn .kpi-n{color:#a8481f}.kpi.gold .kpi-n{color:#96702f}
+.desk{grid-template-columns:repeat(2,minmax(0,180px))}@media (min-width:700px){.desk{grid-template-columns:repeat(4,minmax(0,170px))}}
+.page-head h2{margin:0}

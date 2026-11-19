@@ -76,9 +76,15 @@ def init():
         CREATE TABLE IF NOT EXISTS offers(
             id INTEGER PRIMARY KEY AUTOINCREMENT, percent INTEGER NOT NULL, title_ar TEXT, title_en TEXT,
             date_from TEXT NOT NULL, date_to TEXT NOT NULL, min_nights INTEGER NOT NULL DEFAULT 1, created TEXT);
+        CREATE TABLE IF NOT EXISTS agencies(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT,
+            commission INTEGER NOT NULL DEFAULT 0, note TEXT, created TEXT);
+        CREATE TABLE IF NOT EXISTS agency_payments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, agency_id INTEGER NOT NULL, amount INTEGER NOT NULL, date TEXT NOT NULL, note TEXT, created TEXT);
         ''')
         cols = [r[1] for r in con.execute('PRAGMA table_info(bookings)')]
-        for c, t in (('total', 'INTEGER'), ('source', 'TEXT'), ('room_no', 'TEXT'), ('paid', 'INTEGER'), ('arrived', 'TEXT'), ('departed', 'TEXT')):
+        for c, t in (('total', 'INTEGER'), ('source', 'TEXT'), ('room_no', 'TEXT'), ('paid', 'INTEGER'), ('arrived', 'TEXT'), ('departed', 'TEXT'),
+                     ('agency_id', 'INTEGER'), ('pay_by', 'TEXT'), ('referrer', 'TEXT'), ('net', 'INTEGER')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
         for k, (a, b) in DEFAULT_PRICES.items():
@@ -386,6 +392,34 @@ def notify(b):
 
 
 # ---------------------------------------------------------------- HTTP
+SOURCES = {'web': 'الموقع', 'desk': 'الاستقبال', 'phone': 'الهاتف', 'agency': 'وكالة', 'referral': 'عن طريق شخص'}
+AGENCIES = {}          # id -> name, refreshed whenever agencies are read or changed
+
+
+def load_agencies(con):
+    AGENCIES.clear()
+    AGENCIES.update({r['id']: r['name'] for r in con.execute('SELECT id, name FROM agencies')})
+
+
+def net_of(con, total, agency_id):
+    """What the agency owes the hotel for a booking: the total minus the agency's commission."""
+    if total is None or not agency_id:
+        return None
+    a = con.execute('SELECT commission FROM agencies WHERE id=?', (agency_id,)).fetchone()
+    return None if a is None else int(round(total * (100 - a['commission']) / 100.0))
+
+
+def agency_sums(con, aid):
+    """The agency's account with the hotel, from confirmed bookings and recorded payments."""
+    bks = con.execute("SELECT * FROM bookings WHERE agency_id=? AND status='confirmed' ORDER BY check_in", (aid,)).fetchall()
+    pays = con.execute('SELECT * FROM agency_payments WHERE agency_id=? ORDER BY date, id', (aid,)).fetchall()
+    sales = sum(b['total'] or 0 for b in bks)
+    due = sum(b['net'] if b['net'] is not None else (b['total'] or 0) for b in bks if b['pay_by'] == 'agency')
+    commission = sum((b['total'] or 0) - (b['net'] if b['net'] is not None else (b['total'] or 0)) for b in bks if b['pay_by'] != 'agency')
+    paid = sum(x['amount'] for x in pays)
+    return bks, pays, {'bookings': len(bks), 'sales': sales, 'due': due, 'paid': paid, 'balance': due - paid, 'commission_owed': commission}
+
+
 def letter_key(ref):
     """The confirmation letter opens only with this key, so a booking number alone is not enough to read it."""
     return hmac.new(secret(), ('letter:' + ref).encode(), hashlib.sha256).hexdigest()[:20]
@@ -396,61 +430,177 @@ def row(r):
     d['breakfast'] = bool(d['breakfast'])
     d['room_name'] = ROOMS.get(d.get('room') or '', ('Any room', 'أي غرفة'))[1]
     d['letter'] = '/api/confirmation/%s/%s' % (d['ref'], letter_key(d['ref']))
+    d['agency_name'] = AGENCIES.get(d.get('agency_id')) if d.get('agency_id') else None
+    d['source_name'] = SOURCES.get(d.get('source') or 'web', 'الموقع')
     return d
 
 
 HOTEL = {'phone': '+963 998 730 730', 'wa': '963998730730', 'email': 'res@royalinn.org', 'site': 'royalinntartus.com'}
+# Labels are printed in both languages: the guest's language first, the other one small beside it.
+LBL = {'ref': ('Confirmation no.', 'رقم التأكيد'), 'status': ('Status', 'الحالة'), 'issued': ('Date of issue', 'تاريخ الإصدار'), 'to': ('Guest name', 'اسم الضيف'),
+       'phone': ('Phone', 'الهاتف'), 'company': ('Company / agency', 'الشركة / الوكالة'), 'via': ('Booked through', 'الحجز عن طريق'),
+       'cin': ('Arrival', 'الوصول'), 'cout': ('Departure', 'المغادرة'), 'nights': ('Nights', 'الليالي'), 'guests': ('Guests', 'الضيوف'),
+       'room': ('Room type', 'نوع الغرفة'), 'room_no': ('Room number', 'رقم الغرفة'), 'bf': ('Breakfast', 'الفطور'), 'rate': ('Average rate per night', 'متوسط سعر الليلة'),
+       'total': ('Total amount', 'المبلغ الإجمالي'), 'paid': ('Paid', 'المدفوع'), 'due': ('Balance due at the hotel', 'المتبقي للدفع في الفندق'), 'pay': ('Payment', 'الدفع')}
+SEC = {'res': ('Reservation', 'بيانات الحجز'), 'stay': ('Stay', 'الإقامة'), 'rate': ('Rate and payment', 'السعر والدفع'), 'pol': ('Hotel policies', 'سياسات الفندق')}
+VIA = {'web': ('Hotel website', 'موقع الفندق'), 'desk': ('Hotel reception', 'استقبال الفندق'), 'phone': ('Telephone', 'الهاتف'), 'agency': ('Travel agency', 'وكالة سفر'), 'referral': ('Referral', 'توصية')}
 LETTER = {
-    'ar': dict(dir='rtl', title='تأكيد حجز', hello='السيد/ة {name} المحترم/ة،', intro='يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس. تفاصيل الحجز:',
-               ref='رقم الحجز', guest='اسم الضيف', cin='تاريخ الوصول', cout='تاريخ المغادرة', nights='عدد الليالي', guests='عدد الضيوف', room='نوع الغرفة',
-               bf='الفطور', yes='مع الفطور (10$ للشخص في اليوم)', no='غير مشمول (متوفر بـ 10$ للشخص)', total='المبلغ الإجمالي', ask='يُحدَّد من الفندق', tax='شامل الضريبة',
-               from14='من الساعة 14:00', until12='حتى الساعة 12:00', terms='معلومات مهمة',
+    'ar': dict(dir='rtl', title='تأكيد حجز', hello='السيد/ة {name} المحترم/ة،', intro='يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس، ونتطلع إلى استقبالكم.',
+               yes='مشمول (10$ للشخص في اليوم)', no='غير مشمول (متوفر بـ 10$ للشخص)', ask='يُحدَّد من الفندق', tax='شامل الضريبة', any='تُحدَّد من الفندق',
+               from14='من الساعة 14:00', until12='حتى الساعة 12:00', confirmed='مؤكَّد', by_agency='يُسدَّد عن طريق الوكالة: {a}', at_hotel='في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي',
                t=['الدفع في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.',
                   'الاستقبال مفتوح على مدار 24 ساعة، وموقف السيارات مجاني للضيوف.', 'يُرجى إحضار هذا التأكيد أو رقم الحجز عند الوصول.'],
-               bye='ننتظركم بكل سرور.', sign='إدارة الحجوزات، فندق رويال إن', addr='الكورنيش البحري، طرطوس، سوريا', issued='تاريخ الإصدار', print='طباعة / حفظ PDF',
-               status='الحالة', confirmed='مؤكَّد', pending_h='الحجز لم يُؤكَّد بعد', pending_p='سيصلكم التأكيد من الفندق قريباً.', cancelled_h='هذا الحجز ملغى',
-               none='الرابط غير صحيح.'),
-    'en': dict(dir='ltr', title='Booking Confirmation', hello='Dear {name},', intro='We are pleased to confirm your booking at Royal Inn Tartus. Your booking details:',
-               ref='Booking number', guest='Guest name', cin='Check-in', cout='Check-out', nights='Nights', guests='Guests', room='Room type',
-               bf='Breakfast', yes='Included ($10 per person per day)', no='Not included (available at $10 per person)', total='Total amount', ask='To be confirmed by the hotel', tax='tax included',
-               from14='from 14:00', until12='until 12:00', terms='Good to know',
+               bye='ننتظركم بكل سرور.', sign='إدارة الحجوزات، فندق رويال إن', addr='الكورنيش البحري، طرطوس، سوريا', print='طباعة / حفظ PDF',
+               pending_h='الحجز لم يُؤكَّد بعد', pending_p='سيصلكم التأكيد من الفندق قريباً.', cancelled_h='هذا الحجز ملغى', none='الرابط غير صحيح.'),
+    'en': dict(dir='ltr', title='Booking Confirmation', hello='Dear {name},', intro='We are pleased to confirm your booking at Royal Inn Tartus and look forward to welcoming you.',
+               yes='Included ($10 per person per day)', no='Not included (available at $10 per person)', ask='To be confirmed by the hotel', tax='tax included', any='To be assigned by the hotel',
+               from14='from 14:00', until12='until 12:00', confirmed='Confirmed', by_agency='Settled through the agency: {a}', at_hotel='At the hotel in cash, or by transfer to a Syrian bank in US dollars',
                t=['Payment is made at the hotel in cash, or by transfer to a Syrian bank in US dollars.', 'Cancellation is free up to 48 hours before arrival.',
                   'Reception is open 24 hours and parking is free for guests.', 'Please bring this confirmation or your booking number on arrival.'],
-               bye='We look forward to welcoming you.', sign='Reservations, Royal Inn Hotel', addr='Sea Corniche, Tartus, Syria', issued='Issued', print='Print / save as PDF',
-               status='Status', confirmed='Confirmed', pending_h='This booking is not confirmed yet', pending_p='The hotel will send your confirmation shortly.', cancelled_h='This booking was cancelled',
-               none='This link is not valid.'),
+               bye='We look forward to welcoming you.', sign='Reservations, Royal Inn Hotel', addr='Sea Corniche, Tartus, Syria', print='Print / save as PDF',
+               pending_h='This booking is not confirmed yet', pending_p='The hotel will send your confirmation shortly.', cancelled_h='This booking was cancelled', none='This link is not valid.'),
 }
+
+
+def _esc(x):
+    import html as _h
+    return _h.escape(str(x), quote=True)
+
+
+def _fd(ds):
+    return '/'.join(reversed(ds.split('-')))
+
+
+def doc_head(lang, direction, title):
+    return ('<!DOCTYPE html>\n<html lang="%s" dir="%s">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            '<meta name="robots" content="noindex, nofollow">\n<title>%s | Royal Inn Tartus</title>\n<link rel="icon" href="/favicon.ico">\n'
+            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=2">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
+            % (lang, direction, _esc(title)))
+
+
+def doc_band(title, sub=''):
+    """Photo header used by every printed document (the hotel's own sunset view)."""
+    return ('<header class="band"><img class="band-logo" src="/assets/img/logo-light.svg" alt="Royal Inn" width="150" height="60">'
+            '<div class="band-t"><h1>%s</h1>%s</div></header>' % (title, sub))
+
+
+def doc_foot(addr):
+    return ('<footer class="lf"><b>Royal Inn Hotel · فندق رويال إن</b><span>%s</span><span dir="ltr">%s · %s · %s</span></footer>'
+            % (_esc(addr), HOTEL['phone'], HOTEL['email'], HOTEL['site']))
 
 
 def letter_html(r):
     """Printable confirmation letter. Styles and the print button come from static files (the site allows no inline code)."""
-    import html as _h
-    e = lambda x: _h.escape(str(x), quote=True)
-    L = LETTER['en' if (r and r['lang'] == 'en') else 'ar']; lang = 'en' if L['dir'] == 'ltr' else 'ar'
-    fd = lambda ds: '/'.join(reversed(ds.split('-')))
-    head = ('<!DOCTYPE html>\n<html lang="%s" dir="%s">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-            '<meta name="robots" content="noindex, nofollow">\n<title>%s | Royal Inn Tartus</title>\n<link rel="icon" href="/favicon.ico">\n'
-            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=1">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
-            % (lang, L['dir'], e(L['title'])))
-    top = ('<header class="lh"><img src="/assets/img/logo-stacked.svg" alt="Royal Inn" width="150" height="109">'
-           '<div class="lh-c"><b>Royal Inn Hotel · فندق رويال إن</b><span>%s</span><span dir="ltr">%s · %s</span><span dir="ltr">%s</span></div></header>'
-           % (e(L['addr']), HOTEL['phone'], HOTEL['email'], HOTEL['site']))
+    e = _esc
+    lang = 'en' if (r and r['lang'] == 'en') else 'ar'
+    L = LETTER[lang]; i, j = (0, 1) if lang == 'en' else (1, 0)
+    head = doc_head(lang, L['dir'], L['title'])
     if r is None or r['status'] != 'confirmed':
         msg = L['none'] if r is None else L['cancelled_h'] if r['status'] == 'cancelled' else L['pending_h']
         sub = '' if r is None or r['status'] == 'cancelled' else '<p>%s</p>' % e(L['pending_p'])
-        return head + '<main class="sheet">' + top + '<h1>%s</h1>%s</main>\n</body>\n</html>\n' % (e(msg), sub)
-    room = ROOMS.get(r['room'] or '', ('To be assigned by the hotel', 'تُحدَّد من الفندق'))[0 if lang == 'en' else 1]
-    total = ('$%d <small>(%s)</small>' % (r['total'], e(L['tax']))) if r['total'] else e(L['ask'])
-    rows = [(L['ref'], '<b dir="ltr">%s</b>' % e(r['ref'])), (L['status'], '<span class="ok">%s</span>' % e(L['confirmed'])), (L['guest'], e(r['name'])),
-            (L['cin'], '<b dir="ltr">%s</b> <small>%s</small>' % (fd(r['check_in']), e(L['from14']))), (L['cout'], '<b dir="ltr">%s</b> <small>%s</small>' % (fd(r['check_out']), e(L['until12']))),
-            (L['nights'], r['nights']), (L['guests'], r['guests']), (L['room'], e(room)), (L['bf'], e(L['yes'] if r['breakfast'] else L['no'])), (L['total'], '<b class="tot">%s</b>' % total)]
-    table = '<table class="lt">' + ''.join('<tr><th>%s</th><td>%s</td></tr>' % (e(k), v) for k, v in rows) + '</table>'
-    terms = '<h2>%s</h2><ul>%s</ul>' % (e(L['terms']), ''.join('<li>%s</li>' % e(x) for x in L['t']))
-    foot = ('<p class="bye">%s</p><p class="sign">%s</p><p class="issued">%s: <span dir="ltr">%s</span></p>'
-            % (e(L['bye']), e(L['sign']), e(L['issued']), fd(dt.date.today().isoformat())))
-    return (head + '<div class="tools"><button type="button" data-print>%s</button></div><main class="sheet">' % e(L['print']) + top
-            + '<h1>%s</h1><p class="hello">%s</p><p>%s</p>' % (e(L['title']), e(L['hello'].format(name=r['name'])), e(L['intro']))
-            + table + terms + foot + '</main>\n</body>\n</html>\n')
+        return head + '<main class="sheet">' + doc_band(e(msg)) + '<div class="pad">%s</div>' % sub + doc_foot(L['addr']) + '</main>\n</body>\n</html>\n'
+    keys = r.keys()
+    g = lambda k: r[k] if k in keys else None
+    lab = lambda k: '%s <i dir="auto">%s</i>' % (e(LBL[k][i]), e(LBL[k][j]))
+    sec = lambda k, rows: ('<section class="sec"><h2>%s <i>%s</i></h2><table class="lt">%s</table></section>'
+                           % (e(SEC[k][i]), e(SEC[k][j]), ''.join('<tr><th>%s</th><td>%s</td></tr>' % (lab(a), v) for a, v in rows)))
+    agency = AGENCIES.get(g('agency_id')) if g('agency_id') else None
+    room = ROOMS[r['room']][0 if lang == 'en' else 1] if r['room'] in ROOMS else L['any']
+    res = [('ref', '<b dir="ltr">%s</b>' % e(r['ref'])), ('status', '<span class="ok">%s</span>' % e(L['confirmed'])),
+           ('to', e(r['name']))]
+    if r['phone'] and r['phone'] != '-':
+        res.append(('phone', '<span dir="ltr">%s</span>' % e(r['phone'])))
+    if agency:
+        res.append(('company', e(agency)))
+    src = g('source') or 'web'
+    res.append(('via', e(VIA.get(src, VIA['web'])[i]) + ((' · ' + e(g('referrer'))) if (src == 'referral' and g('referrer')) else '')))
+    res.append(('issued', '<span dir="ltr">%s</span>' % _fd(dt.date.today().isoformat())))
+    stay = [('cin', '<b dir="ltr">%s</b> <small>%s</small>' % (_fd(r['check_in']), e(L['from14']))),
+            ('cout', '<b dir="ltr">%s</b> <small>%s</small>' % (_fd(r['check_out']), e(L['until12']))),
+            ('nights', r['nights']), ('guests', r['guests']), ('room', e(room))]
+    if g('room_no'):
+        stay.append(('room_no', '<span dir="ltr">%s</span>' % e(g('room_no'))))
+    stay.append(('bf', e(L['yes'] if r['breakfast'] else L['no'])))
+    if agency and g('pay_by') == 'agency':      # a voucher: the guest pays the agency, so no amounts are printed
+        rate = [('pay', e(L['by_agency'].format(a=agency)))]
+    elif r['total']:
+        paid = g('paid') or 0
+        rate = [('rate', '$%d' % round(r['total'] / max(1, r['nights']))), ('total', '<b class="tot">$%d</b> <small>(%s)</small>' % (r['total'], e(L['tax'])))]
+        if paid:
+            rate += [('paid', '$%d' % paid), ('due', '<b>$%d</b>' % max(0, r['total'] - paid))]
+        rate.append(('pay', e(L['at_hotel'])))
+    else:
+        rate = [('total', e(L['ask'])), ('pay', e(L['at_hotel']))]
+    pol = '<section class="sec"><h2>%s <i>%s</i></h2><ul class="pol">%s</ul></section>' % (e(SEC['pol'][i]), e(SEC['pol'][j]), ''.join('<li>%s</li>' % e(x) for x in L['t']))
+    band = doc_band(e(L['title']) + (' <i>%s</i>' % e(LETTER['en' if lang == 'ar' else 'ar']['title'])), '<p dir="ltr">%s</p>' % e(r['ref']))
+    return (head + '<div class="tools"><button type="button" data-print>%s</button></div><main class="sheet">' % e(L['print']) + band
+            + '<div class="pad"><p class="hello">%s</p><p>%s</p>' % (e(L['hello'].format(name=r['name'])), e(L['intro']))
+            + sec('res', res) + '<div class="two">' + sec('stay', stay) + sec('rate', rate) + '</div>' + pol
+            + '<p class="bye">%s</p><p class="sign">%s</p></div>' % (e(L['bye']), e(L['sign'])) + doc_foot(L['addr']) + '</main>\n</body>\n</html>\n')
+
+
+def pricelist_html(con, agency=None):
+    """Printable rate sheet in Arabic and English. With an agency it also prints that agency's net rates."""
+    e = _esc
+    today = dt.date.today().isoformat()
+    com = agency['commission'] if agency else 0
+    money = lambda v: 'عند الطلب<i class="blk">on request</i>' if v is None else '$%d' % v
+    net = lambda v: '' if v is None else '$%d' % round(v * (100 - com) / 100.0)
+    prices = {x['room']: x for x in con.execute('SELECT * FROM prices')}
+    th = '<tr><th>نوع الغرفة <i>Room type</i></th><th>شخص واحد <i>1 guest</i></th><th>شخصان أو أكثر <i>2+ guests</i></th>%s</tr>' % ('<th>الصافي للوكالة <i>Net</i></th>' if agency else '')
+    body = ''
+    for k, (en, ar) in ROOMS.items():
+        pr = prices.get(k); p1 = pr['price'] if pr else None; p2 = pr['price2'] if pr else None
+        nt = ' / '.join(x for x in (net(p1), net(p2) if p2 else '') if x)
+        body += '<tr><td><b>%s</b> <i>%s</i></td><td>%s</td><td>%s</td>%s</tr>' % (e(ar), e(en), money(p1), money(p2) if p2 else ('—' if p1 is not None else money(None)), ('<td dir="ltr" class="num">%s</td>' % (nt or '—')) if agency else '')
+    seasons = con.execute('SELECT * FROM rates WHERE date_to >= ? ORDER BY date_from, id', (today,)).fetchall()
+    srows = ''
+    for x in seasons:
+        nm = ROOMS[x['room']] if x['room'] in ROOMS else ('All rooms', 'كل الغرف')
+        srows += '<tr><td><span dir="ltr">%s – %s</span></td><td><b>%s</b> <i>%s</i></td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            _fd(x['date_from']), _fd(x['date_to']), e(nm[1]), e(nm[0]), money(x['price']) if x['price'] is not None else '—', ('$%d' % x['price2']) if x['price2'] else '—', e(x['note'] or ''))
+    season = ('<section class="sec"><h2>أسعار خاصة بتواريخ محددة <i>Rates for specific dates</i></h2><table class="grid"><tr><th>التاريخ <i>Dates</i></th><th>الغرفة <i>Room</i></th>'
+              '<th>شخص <i>1 guest</i></th><th>شخصان+ <i>2+</i></th><th>ملاحظة <i>Note</i></th></tr>%s</table></section>' % srows) if srows else ''
+    offers = con.execute('SELECT * FROM offers WHERE date_to >= ? ORDER BY date_from', (today,)).fetchall()
+    off = ('<section class="sec"><h2>العروض الحالية <i>Current offers</i></h2><ul class="pol">%s</ul></section>' % ''.join(
+        '<li><b>%d%%</b> · %s · <span dir="ltr">%s – %s</span>%s</li>' % (o['percent'], e(o['title_ar'] or o['title_en'] or ''), _fd(o['date_from']), _fd(o['date_to']),
+                                                                       (' · %d+ ليالٍ / nights' % o['min_nights']) if o['min_nights'] > 1 else '') for o in offers)) if offers else ''
+    notes = [('الأسعار بالدولار الأمريكي للغرفة في الليلة، شاملة الضريبة.', 'Rates are in US dollars per room per night, tax included.'),
+             ('الفطور اختياري: %d$ للشخص في اليوم.' % BREAKFAST, 'Breakfast is optional: $%d per person per day.' % BREAKFAST),
+             ('الوصول من 14:00 والمغادرة حتى 12:00.', 'Check-in from 14:00, check-out until 12:00.'),
+             ('الإلغاء مجاني حتى 48 ساعة قبل الوصول.', 'Free cancellation up to 48 hours before arrival.'),
+             ('الأسعار قابلة للتغيير، والسعر المؤكَّد هو المذكور في رسالة التأكيد.', 'Rates may change; the confirmed rate is the one on the confirmation letter.')]
+    who = ('<p class="hello">%s · <span>عمولة / commission %d%%</span></p>' % (e(agency['name']), com)) if agency else ''
+    return (doc_head('ar', 'rtl', 'قائمة الأسعار') + '<div class="tools"><button type="button" data-print>طباعة / حفظ PDF</button></div><main class="sheet">'
+            + doc_band('قائمة الأسعار <i>Rate sheet</i>', '<p>%s <span dir="ltr">%s</span></p>' % ('أسعار الوكالات · Agency rates ·' if agency else '', _fd(today)))
+            + '<div class="pad">' + who + '<section class="sec"><h2>الأسعار الأساسية <i>Standard rates</i></h2><table class="grid">' + th + body + '</table></section>' + season + off
+            + '<section class="sec"><h2>ملاحظات <i>Notes</i></h2><ul class="pol">%s</ul></section></div>' % ''.join('<li>%s<i class="blk" dir="ltr">%s</i></li>' % (e(x), e(y)) for x, y in notes)
+            + doc_foot('الكورنيش البحري، طرطوس، سوريا · Sea Corniche, Tartus, Syria') + '</main>\n</body>\n</html>\n')
+
+
+def statement_html(a, bks, pays, sums):
+    """Agency account statement: confirmed bookings, payments received and the balance."""
+    e = _esc
+    rows = ''
+    for b in bks:
+        tot = b['total'] or 0; nt = b['net'] if b['net'] is not None else tot
+        by_ag = b['pay_by'] == 'agency'
+        rows += '<tr><td dir="ltr">%s</td><td>%s</td><td dir="ltr">%s – %s</td><td>%d</td><td>$%d</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            e(b['ref']), e(b['name']), _fd(b['check_in']), _fd(b['check_out']), b['nights'], tot, 'الوكالة' if by_ag else 'الضيف',
+            ('$%d' % nt) if by_ag else '—', '—' if by_ag else ('$%d' % (tot - nt)))
+    prow = ''.join('<tr><td dir="ltr">%s</td><td>$%d</td><td>%s</td></tr>' % (_fd(x['date']), x['amount'], e(x['note'] or '')) for x in pays)
+    bal = sums['balance']
+    summ = [('عدد الحجوزات المؤكدة', sums['bookings']), ('إجمالي المبيعات', '$%d' % sums['sales']), ('المستحق على الوكالة (الصافي)', '$%d' % sums['due']),
+            ('المدفوع من الوكالة', '$%d' % sums['paid']), ('الرصيد المتبقي على الوكالة' if bal >= 0 else 'رصيد دائن للوكالة', '<b class="tot">$%d</b>' % abs(bal)),
+            ('عمولة مستحقة للوكالة (حجوزات دفعها الضيف)', '$%d' % sums['commission_owed'])]
+    contact = ' · '.join(e(x) for x in (a['contact'], a['phone'], a['email']) if x)
+    return (doc_head('ar', 'rtl', 'كشف حساب') + '<div class="tools"><button type="button" data-print>طباعة / حفظ PDF</button></div><main class="sheet">'
+            + doc_band('كشف حساب <i>Statement of account</i>', '<p>%s · <span dir="ltr">%s</span></p>' % (e(a['name']), _fd(dt.date.today().isoformat())))
+            + '<div class="pad"><p class="hello">%s · عمولة %d%%</p>%s' % (e(a['name']), a['commission'], ('<p dir="auto">%s</p>' % contact) if contact else '')
+            + '<section class="sec"><h2>الحجوزات المؤكدة <i>Bookings</i></h2><table class="grid sm"><tr><th>الرقم</th><th>الضيف</th><th>التواريخ</th><th>ليالٍ</th><th>الإجمالي</th><th>الدافع</th><th>المستحق</th><th>العمولة</th></tr>%s</table></section>' % (rows or '<tr><td colspan="8">لا توجد حجوزات مؤكدة.</td></tr>')
+            + '<section class="sec"><h2>الدفعات المستلمة <i>Payments</i></h2><table class="grid sm"><tr><th>التاريخ</th><th>المبلغ</th><th>ملاحظة</th></tr>%s</table></section>' % (prow or '<tr><td colspan="3">لا توجد دفعات.</td></tr>')
+            + '<section class="sec"><h2>الخلاصة <i>Summary</i></h2><table class="lt">%s</table></section></div>' % ''.join('<tr><th>%s</th><td>%s</td></tr>' % (e(k), v) for k, v in summ)
+            + doc_foot('الكورنيش البحري، طرطوس، سوريا') + '</main>\n</body>\n</html>\n')
 
 
 class H(BaseHTTPRequestHandler):
@@ -525,7 +675,20 @@ class H(BaseHTTPRequestHandler):
             if hmac.compare_digest(letter_key(m.group(1)), m.group(2)):
                 with db() as con:
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                    load_agencies(con)
             return self.send(200 if r else 404, raw=letter_html(r).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'})
+        m = re.fullmatch(r'/api/pricelist(?:/(\d+)/([0-9a-f]{20}))?', p)
+        if m:
+            agency = None
+            with db() as con:
+                if m.group(1):
+                    if not hmac.compare_digest(letter_key('agency:' + m.group(1)), m.group(2)):
+                        return self.send(404, {'ok': False})
+                    agency = con.execute('SELECT * FROM agencies WHERE id=?', (int(m.group(1)),)).fetchone()
+                    if not agency:
+                        return self.send(404, {'ok': False})
+                html_doc = pricelist_html(con, agency)
+            return self.send(200, raw=html_doc.encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow'})
         if p == '/api/offers':
             with db() as con:
                 rows = con.execute('SELECT * FROM offers WHERE date_to >= ? ORDER BY percent DESC, date_from', (dt.date.today().isoformat(),)).fetchall()
@@ -571,6 +734,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send(401, {'ok': False, 'error': 'auth'})
             with db() as con:
                 if p == '/api/admin/bookings':
+                    load_agencies(con)
                     st = q.get('status', 'active')
                     if st == 'all':
                         rows = con.execute('SELECT * FROM bookings ORDER BY created DESC LIMIT 500').fetchall()
@@ -584,6 +748,7 @@ class H(BaseHTTPRequestHandler):
                     counts = {s: con.execute('SELECT COUNT(*) FROM bookings WHERE status=?', (s,)).fetchone()[0] for s in STATUSES}
                     return self.send(200, {'ok': True, 'items': [row(r) for r in rows], 'counts': counts})
                 if p == '/api/admin/dashboard':
+                    load_agencies(con)
                     # one screen for the front desk: today, tonight, and the next two weeks
                     today = dt.date.today(); ts = today.isoformat()
                     inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
@@ -629,6 +794,37 @@ class H(BaseHTTPRequestHandler):
                     rows = {r['room']: r for r in con.execute('SELECT * FROM prices')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'price': rows[k]['price'] if k in rows else None,
                                                                    'price2': rows[k]['price2'] if k in rows else None} for k, v in ROOMS.items()]})
+                if p == '/api/admin/agencies':
+                    load_agencies(con)
+                    items = []
+                    for a in con.execute('SELECT * FROM agencies ORDER BY name').fetchall():
+                        _b, _p, sums = agency_sums(con, a['id'])
+                        items.append(dict(dict(a), **sums))
+                    return self.send(200, {'ok': True, 'items': items})
+                m = re.fullmatch(r'/api/admin/agencies/(\d+)', p)
+                if m:
+                    a = con.execute('SELECT * FROM agencies WHERE id=?', (int(m.group(1)),)).fetchone()
+                    if not a:
+                        return self.send(404, {'ok': False})
+                    load_agencies(con)
+                    bks, pays, sums = agency_sums(con, a['id'])
+                    return self.send(200, {'ok': True, 'agency': dict(a), 'sums': sums, 'bookings': [row(b) for b in bks], 'payments': [dict(x) for x in pays],
+                                           'pricelist': '/api/pricelist/%d/%s' % (a['id'], letter_key('agency:%d' % a['id']))})
+                m = re.fullmatch(r'/api/admin/agencies/(\d+)/statement', p)
+                if m:
+                    a = con.execute('SELECT * FROM agencies WHERE id=?', (int(m.group(1)),)).fetchone()
+                    if not a:
+                        return self.send(404, {'ok': False})
+                    bks, pays, sums = agency_sums(con, a['id'])
+                    return self.send(200, raw=statement_html(a, bks, pays, sums).encode('utf-8'), ctype='text/html; charset=utf-8')
+                if p == '/api/admin/day':
+                    d0 = parse_day(q.get('date')) or dt.date.today(); ds = d0.isoformat()
+                    load_agencies(con)
+                    rows = con.execute("SELECT * FROM bookings WHERE status!='cancelled' AND check_in <= ? AND check_out >= ? ORDER BY check_in", (ds, ds)).fetchall()
+                    return self.send(200, {'ok': True, 'date': ds,
+                                           'arrivals': [row(x) for x in rows if x['check_in'] == ds],
+                                           'departures': [row(x) for x in rows if x['check_out'] == ds],
+                                           'staying': [row(x) for x in rows if x['check_in'] < ds < x['check_out']]})
                 if p == '/api/admin/offers':
                     rows = con.execute('SELECT * FROM offers ORDER BY date_to DESC, id DESC LIMIT 100').fetchall()
                     return self.send(200, {'ok': True, 'today': dt.date.today().isoformat(), 'items': [dict(r) for r in rows]})
@@ -661,10 +857,11 @@ class H(BaseHTTPRequestHandler):
                     return self.send(200, {'ok': True, 'dates': [d.isoformat() for d in dates], 'rows': rows, 'any': unassigned})
                 if p == '/api/admin/export.csv':
                     out = io.StringIO(); w = csv.writer(out)
-                    cols = ['ref', 'created', 'status', 'source', 'check_in', 'check_out', 'nights', 'guests', 'room', 'breakfast', 'total', 'paid', 'room_no', 'arrived', 'departed', 'name', 'phone', 'email', 'message', 'staff_note']
-                    w.writerow(cols)
+                    cols = ['ref', 'created', 'status', 'source', 'check_in', 'check_out', 'nights', 'guests', 'room', 'breakfast', 'total', 'paid', 'room_no', 'arrived', 'departed', 'name', 'phone', 'email', 'message', 'staff_note', 'pay_by', 'net', 'referrer']
+                    load_agencies(con)
+                    w.writerow(cols + ['agency'])
                     for r in con.execute('SELECT * FROM bookings ORDER BY created'):
-                        w.writerow(['' if r[c] is None else r[c] for c in cols])
+                        w.writerow(['' if r[c] is None else r[c] for c in cols] + [AGENCIES.get(r['agency_id'], '') if r['agency_id'] else ''])
                     return self.send(200, raw=('﻿' + out.getvalue()).encode(), ctype='text/csv; charset=utf-8',
                                      extra={'Content-Disposition': 'attachment; filename="royalinn-bookings.csv"'})
         return self.send(404, {'ok': False})
@@ -741,11 +938,21 @@ class H(BaseHTTPRequestHandler):
                     if total is None and room:
                         per = nightly(con, room, guests, [f + dt.timedelta(days=i) for i in range((t - f).days)])
                         total = None if any(x is None for x in per) else sum(per)
-                    con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source,staff_note,updated) '
-                                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                                (ref, now(), 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, room,
-                                 1 if d.get('breakfast') else 0, name, phone or '-', None, clean(d.get('message'), 600) or None, total, 'desk',
-                                 clean(d.get('note'), 400) or None, now()))
+                        if total is not None and d.get('breakfast'):
+                            total += BREAKFAST * guests * len(per)
+                    src = d.get('source') if d.get('source') in ('desk', 'phone', 'agency', 'referral') else 'desk'
+                    try:
+                        aid = int(d['agency_id']) if (src == 'agency' and d.get('agency_id')) else None
+                    except (TypeError, ValueError):
+                        aid = None
+                    if aid and not con.execute('SELECT 1 FROM agencies WHERE id=?', (aid,)).fetchone():
+                        aid = None
+                    pay_by = 'agency' if (aid and d.get('pay_by') == 'agency') else 'guest'
+                    con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source,staff_note,updated,agency_id,pay_by,referrer,net) '
+                                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (ref, now(), 'en' if d.get('lang') == 'en' else 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, room,
+                                 1 if d.get('breakfast') else 0, name, phone or '-', None, clean(d.get('message'), 600) or None, total, src,
+                                 clean(d.get('note'), 400) or None, now(), aid, pay_by, clean(d.get('referrer'), 80) or None, net_of(con, total, aid)))
                 return self.send(200, {'ok': True, 'ref': ref})
             if p == '/api/admin/prices':
                 with db() as con:
@@ -765,6 +972,42 @@ class H(BaseHTTPRequestHandler):
                                 return self.send(400, {'ok': False})
                             vals.append(x)
                         con.execute('INSERT INTO prices(room,price,price2) VALUES(?,?,?) ON CONFLICT(room) DO UPDATE SET price=excluded.price, price2=excluded.price2', (k, *vals))
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/agencies(?:/(\d+))?', p)
+            if m:
+                name = clean(d.get('name'), 80)
+                try:
+                    com = max(0, min(50, int(d.get('commission') or 0)))
+                except (TypeError, ValueError):
+                    return self.send(400, {'ok': False, 'error': 'commission'})
+                if len(name) < 2:
+                    return self.send(400, {'ok': False, 'error': 'name'})
+                vals = (name, clean(d.get('contact'), 80) or None, clean(d.get('phone'), 24) or None, clean(d.get('email'), 120) or None, com, clean(d.get('note'), 300) or None)
+                with LOCK, db() as con:
+                    if m.group(1):
+                        con.execute('UPDATE agencies SET name=?, contact=?, phone=?, email=?, commission=?, note=? WHERE id=?', vals + (int(m.group(1)),))
+                    else:
+                        con.execute('INSERT INTO agencies(name,contact,phone,email,commission,note,created) VALUES(?,?,?,?,?,?,?)', vals + (now(),))
+                    load_agencies(con)
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/agencies/(\d+)/payment', p)
+            if m:
+                day = parse_day(d.get('date')) or dt.date.today()
+                try:
+                    amount = int(d['amount'])
+                except (KeyError, TypeError, ValueError):
+                    return self.send(400, {'ok': False, 'error': 'amount'})
+                if not 0 < amount < 10000000:
+                    return self.send(400, {'ok': False, 'error': 'amount'})
+                with db() as con:
+                    if not con.execute('SELECT 1 FROM agencies WHERE id=?', (int(m.group(1)),)).fetchone():
+                        return self.send(404, {'ok': False})
+                    con.execute('INSERT INTO agency_payments(agency_id,amount,date,note,created) VALUES(?,?,?,?,?)', (int(m.group(1)), amount, day.isoformat(), clean(d.get('note'), 200) or None, now()))
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/agency-payments/(\d+)/delete', p)
+            if m:
+                with db() as con:
+                    con.execute('DELETE FROM agency_payments WHERE id=?', (int(m.group(1)),))
                 return self.send(200, {'ok': True})
             if p == '/api/admin/offers':
                 f, t = parse_day(d.get('from')), parse_day(d.get('to') or d.get('from'))
@@ -829,8 +1072,9 @@ class H(BaseHTTPRequestHandler):
                         return self.send(200, res)
                     if not free and not d.get('force'):
                         return self.send(409, dict(res, ok=False, error='full'))
-                    con.execute('UPDATE bookings SET check_out=?, nights=?, total=?, updated=? WHERE ref=?',
-                                (new_out.isoformat(), (new_out - cin).days, total if total is not None else cur['total'], now(), m.group(1)))
+                    _t = total if total is not None else cur['total']
+                    con.execute('UPDATE bookings SET check_out=?, nights=?, total=?, net=?, updated=? WHERE ref=?',
+                                (new_out.isoformat(), (new_out - cin).days, _t, net_of(con, _t, cur['agency_id']), now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
                 return self.send(200, dict(res, item=row(r)))
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})', p)
@@ -849,8 +1093,23 @@ class H(BaseHTTPRequestHandler):
                     room_no = cur['room_no'] if 'room_no' not in d else (clean(d.get('room_no'), 12) or None)
                     arrived = cur['arrived'] if 'arrived' not in d else (now() if d['arrived'] else None)
                     departed = cur['departed'] if 'departed' not in d else (now() if d['departed'] else None)
-                    con.execute('UPDATE bookings SET status=?, staff_note=?, room_no=?, paid=?, arrived=?, departed=?, updated=? WHERE ref=?',
-                                (st or cur['status'], clean(d.get('note', cur['staff_note']), 400) or None, room_no, paid, arrived, departed, now(), m.group(1)))
+                    aid, pay_by, src = cur['agency_id'], cur['pay_by'], cur['source']
+                    if 'agency_id' in d:
+                        try:
+                            aid = int(d['agency_id']) if d['agency_id'] else None
+                        except (TypeError, ValueError):
+                            aid = None
+                        if aid and not con.execute('SELECT 1 FROM agencies WHERE id=?', (aid,)).fetchone():
+                            aid = None
+                        pay_by = 'agency' if (aid and d.get('pay_by') == 'agency') else 'guest'
+                        src = cur['source'] or 'web'       # a website request keeps its origin even when an agency is attached
+                        if aid and src in ('desk', 'phone'):
+                            src = 'agency'
+                        elif not aid and src == 'agency':
+                            src = 'desk'
+                    referrer = cur['referrer'] if 'referrer' not in d else (clean(d.get('referrer'), 80) or None)
+                    con.execute('UPDATE bookings SET status=?, staff_note=?, room_no=?, paid=?, arrived=?, departed=?, agency_id=?, pay_by=?, source=?, referrer=?, net=?, updated=? WHERE ref=?',
+                                (st or cur['status'], clean(d.get('note', cur['staff_note']), 400) or None, room_no, paid, arrived, departed, aid, pay_by, src, referrer, net_of(con, cur['total'], aid), now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
                 if st == 'confirmed' and cur['status'] != 'confirmed' and r['email']:
                     threading.Thread(target=mail_confirmation, args=(dict(r),), daemon=True).start()
