@@ -44,6 +44,8 @@ STATUSES = ('new', 'confirmed', 'cancelled')
 DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (None, None), 'royal-suite': (None, None), 'two-bedroom-royal-suite': (None, None)}
 BREAKFAST = 10
 MAX_NIGHTS, MAX_AHEAD_DAYS = 60, 550
+os.environ['TZ'] = os.environ.get('HOTEL_TZ', '<+03>-3')
+time.tzset()
 SESSION_HOURS = 12
 LOCK = threading.Lock()
 
@@ -76,6 +78,9 @@ def init():
         CREATE TABLE IF NOT EXISTS offers(
             id INTEGER PRIMARY KEY AUTOINCREMENT, percent INTEGER NOT NULL, title_ar TEXT, title_en TEXT,
             date_from TEXT NOT NULL, date_to TEXT NOT NULL, min_nights INTEGER NOT NULL DEFAULT 1, created TEXT);
+        CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS units(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, no TEXT NOT NULL UNIQUE, room TEXT NOT NULL, floor TEXT, state TEXT NOT NULL DEFAULT 'clean', note TEXT);
         CREATE TABLE IF NOT EXISTS agencies(
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT,
             commission INTEGER NOT NULL DEFAULT 0, note TEXT, created TEXT);
@@ -84,7 +89,8 @@ def init():
         ''')
         cols = [r[1] for r in con.execute('PRAGMA table_info(bookings)')]
         for c, t in (('total', 'INTEGER'), ('source', 'TEXT'), ('room_no', 'TEXT'), ('paid', 'INTEGER'), ('arrived', 'TEXT'), ('departed', 'TEXT'),
-                     ('agency_id', 'INTEGER'), ('pay_by', 'TEXT'), ('referrer', 'TEXT'), ('net', 'INTEGER')):
+                     ('agency_id', 'INTEGER'), ('pay_by', 'TEXT'), ('referrer', 'TEXT'), ('net', 'INTEGER'),
+                     ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
         for k, (a, b) in DEFAULT_PRICES.items():
@@ -392,6 +398,131 @@ def notify(b):
 
 
 # ---------------------------------------------------------------- HTTP
+# Hotel rules the manager can change in the panel. Defaults follow common hotel practice; the hotel confirms them.
+DEFAULTS = {'checkin': '14:00', 'checkout': '12:00', 'remind_hours': '2', 'late_on': '1', 'late_grace': '60', 'late_half_until': '18:00',
+            'late_half_pct': '50', 'late_full_pct': '100', 'noshow_on': '0', 'early_note': '1'}
+TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+
+
+def settings(con):
+    s = dict(DEFAULTS)
+    s.update({r['k']: r['v'] for r in con.execute('SELECT k, v FROM settings') if r['k'] in DEFAULTS})
+    return s
+
+
+def hm(t):
+    return int(t[:2]) * 60 + int(t[3:])
+
+
+def night_rate(con, b):
+    """Room rate of the booking's last night (used for late check-out fees)."""
+    if b['room']:
+        last = dt.date.fromisoformat(b['check_out']) - dt.timedelta(days=1)
+        per = nightly(con, b['room'], b['guests'], [last])
+        if per and per[0] is not None:
+            return per[0]
+    if b['total'] and b['nights']:
+        return int(round((b['total'] - (b['late_fee'] or 0)) / b['nights']))
+    return None
+
+
+def desk_state(con):
+    """Who is due out soon, who is late and who did not arrive, by the hotel's clock and rules."""
+    S = settings(con); n = dt.datetime.now(); ts = n.date().isoformat(); mins = n.hour * 60 + n.minute
+    out, grace, half = hm(S['checkout']), int(S['late_grace']), hm(S['late_half_until'])
+    rows = con.execute("SELECT * FROM bookings WHERE status='confirmed' AND departed IS NULL AND check_in <= ? AND check_out >= ?",
+                       (ts, (n.date() - dt.timedelta(days=7)).isoformat())).fetchall()
+    soon, late, noshow = [], [], []
+    for b in rows:
+        if b['check_out'] == ts and mins < out + grace:
+            if mins >= out - int(float(S['remind_hours']) * 60):
+                d = row(b); d['minutes_left'] = out - mins; soon.append(d)
+        elif b['check_out'] <= ts and (b['arrived'] or b['check_out'] == ts):
+            d = row(b); rate = night_rate(con, b)
+            stage = 'full' if (b['check_out'] < ts or mins >= half) else 'half'
+            pct = int(S['late_full_pct'] if stage == 'full' else S['late_half_pct'])
+            d.update(stage=stage, late_minutes=(mins - out) if b['check_out'] == ts else None, rate=rate,
+                     fee=None if rate is None else int(round(rate * pct / 100.0)), pct=pct)
+            late.append(d)
+        if not b['arrived'] and b['check_in'] < ts and b['check_out'] >= ts:
+            noshow.append(row(b))
+    return S, soon, late, noshow
+
+
+def unit_busy(con, no, a, b, skip=None):
+    """A confirmed booking that already holds this room number on overlapping nights."""
+    return con.execute("SELECT ref, name FROM bookings WHERE status='confirmed' AND departed IS NULL AND room_no=? AND check_in < ? AND check_out > ? AND ref != ?",
+                       (no, b, a, skip or '')).fetchone()
+
+
+def reminder_loop():
+    """Once a day, when the first guests are within the reminder window before check-out, tell the hotel (Telegram, e-mail)
+    and e-mail the guests who left an address. WhatsApp is sent by the staff with one tap from the panel."""
+    while True:
+        time.sleep(60)
+        try:
+            with db() as con:
+                S, soon, late, _ns = desk_state(con)
+                today = dt.date.today().isoformat()
+                due = [b for b in soon if not b.get('reminded')]
+                last = con.execute("SELECT v FROM settings WHERE k='_rem_day'").fetchone()
+                if soon and (not last or last['v'] != today):
+                    con.execute("INSERT OR REPLACE INTO settings(k,v) VALUES('_rem_day',?)", (today,))
+                    lines = ['⏰ مغادرة اليوم حتى الساعة %s (%d):' % (S['checkout'], len(soon))]
+                    lines += ['• %s%s · %s' % (b['name'], (' · غرفة ' + b['room_no']) if b['room_no'] else '', b['phone']) for b in soon]
+                    lines += ['', 'https://royalinntartus.com/panel/']
+                    send_staff('\n'.join(lines), 'Check-outs today - Royal Inn')
+                if os.environ.get('SMTP_HOST'):
+                    for b in due:
+                        if b.get('email'):
+                            mail_reminder(b, S)
+                            con.execute('UPDATE bookings SET reminded=? WHERE ref=?', (now(), b['ref']))
+        except Exception as e:
+            print('reminder loop:', type(e).__name__, flush=True)
+
+
+def send_staff(text, subject):
+    token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
+    if token and chat:
+        try:
+            import urllib.request, urllib.parse
+            data = urllib.parse.urlencode({'chat_id': chat, 'text': text, 'disable_web_page_preview': 'true'}).encode()
+            urllib.request.urlopen(urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data), timeout=12).read()
+        except Exception as e:
+            print('telegram notify failed:', type(e).__name__, flush=True)
+    if os.environ.get('SMTP_HOST') and os.environ.get('NOTIFY_TO'):
+        try:
+            m = EmailMessage(); m['Subject'] = subject; m['From'] = os.environ.get('SMTP_USER') or os.environ['NOTIFY_TO']; m['To'] = os.environ['NOTIFY_TO']
+            m.set_content(text); smtp_send(m)
+        except Exception as e:
+            print('mail notify failed:', type(e).__name__, flush=True)
+
+
+def late_text(S, lang):
+    if S['late_on'] != '1':
+        return None
+    free = hm(S['checkout']) + int(S['late_grace']); ft = '%02d:%02d' % (free // 60, free % 60)
+    if lang == 'en':
+        return 'Late check-out is subject to availability: after %s and until %s, %s%% of the nightly rate is charged; after %s, a full extra night (%s%%). Please tell reception in advance.' % (
+            ft, S['late_half_until'], S['late_half_pct'], S['late_half_until'], S['late_full_pct'])
+    return 'المغادرة المتأخرة حسب التوفر: بعد الساعة %s وحتى %s يُحتسب %s%% من سعر الليلة، وبعد الساعة %s تُحتسب ليلة إضافية كاملة (%s%%). يُرجى إبلاغ الاستقبال مسبقاً.' % (
+        ft, S['late_half_until'], S['late_half_pct'], S['late_half_until'], S['late_full_pct'])
+
+
+def mail_reminder(b, S):
+    try:
+        en = b.get('lang') == 'en'
+        m = EmailMessage()
+        m['Subject'] = ('Check-out today at %s - Royal Inn Tartus' if en else 'موعد المغادرة اليوم الساعة %s - فندق رويال إن طرطوس') % S['checkout']
+        m['From'] = os.environ.get('SMTP_USER') or os.environ.get('NOTIFY_TO', ''); m['To'] = b['email']
+        lt = late_text(S, 'en' if en else 'ar')
+        body = (['Dear %s,' % b['name'], '', 'A kind reminder that check-out is today at %s.' % S['checkout'], 'If you would like to stay longer, please contact reception: %s' % HOTEL['phone'], lt or '', '', 'Royal Inn Hotel']
+                if en else ['السيد/ة %s المحترم/ة،' % b['name'], '', 'نذكّركم بأن موعد المغادرة اليوم الساعة %s.' % S['checkout'], 'إذا رغبتم بتمديد الإقامة يُرجى التواصل مع الاستقبال: %s' % HOTEL['phone'], lt or '', '', 'فندق رويال إن'])
+        m.set_content('\n'.join(body)); smtp_send(m)
+    except Exception as e:
+        print('reminder mail failed:', type(e).__name__, flush=True)
+
+
 SOURCES = {'web': 'الموقع', 'desk': 'الاستقبال', 'phone': 'الهاتف', 'agency': 'وكالة', 'referral': 'عن طريق شخص'}
 AGENCIES = {}          # id -> name, refreshed whenever agencies are read or changed
 
@@ -420,6 +551,26 @@ def agency_sums(con, aid):
     return bks, pays, {'bookings': len(bks), 'sales': sales, 'due': due, 'paid': paid, 'balance': due - paid, 'commission_owed': commission}
 
 
+def units_view(con, ds, free_only=False):
+    """The room rack for one day: every numbered room with who is in it, who arrives and who leaves."""
+    out = []
+    bks = con.execute("SELECT * FROM bookings WHERE status='confirmed' AND room_no IS NOT NULL AND check_in <= ? AND check_out >= ?", (ds, ds)).fetchall()
+    for u in con.execute('SELECT * FROM units ORDER BY length(no), no'):
+        mine = [b for b in bks if b['room_no'] == u['no']]
+        stay = next((b for b in mine if b['check_in'] <= ds < b['check_out'] and not b['departed']), None)
+        leave = next((b for b in mine if b['check_out'] == ds and not b['departed']), None)
+        st = 'out' if u['state'] == 'out' else 'occupied' if (stay and stay['arrived']) else 'arriving' if stay else 'leaving' if leave else ('dirty' if u['state'] == 'dirty' else 'free')
+        if free_only:
+            if st in ('free', 'dirty'):
+                out.append({'no': u['no'], 'room': u['room'], 'state': st})
+            continue
+        g = stay or leave
+        out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': ROOMS.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'],
+                    'leaving_today': bool(leave), 'guest': g['name'] if g else None, 'ref': g['ref'] if g else None,
+                    'until': g['check_out'] if g else None, 'since': g['check_in'] if g else None})
+    return out
+
+
 def letter_key(ref):
     """The confirmation letter opens only with this key, so a booking number alone is not enough to read it."""
     return hmac.new(secret(), ('letter:' + ref).encode(), hashlib.sha256).hexdigest()[:20]
@@ -441,7 +592,7 @@ LBL = {'ref': ('Confirmation no.', 'رقم التأكيد'), 'status': ('Status'
        'phone': ('Phone', 'الهاتف'), 'company': ('Company / agency', 'الشركة / الوكالة'), 'via': ('Booked through', 'الحجز عن طريق'),
        'cin': ('Arrival', 'الوصول'), 'cout': ('Departure', 'المغادرة'), 'nights': ('Nights', 'الليالي'), 'guests': ('Guests', 'الضيوف'),
        'room': ('Room type', 'نوع الغرفة'), 'room_no': ('Room number', 'رقم الغرفة'), 'bf': ('Breakfast', 'الفطور'), 'rate': ('Average rate per night', 'متوسط سعر الليلة'),
-       'total': ('Total amount', 'المبلغ الإجمالي'), 'paid': ('Paid', 'المدفوع'), 'due': ('Balance due at the hotel', 'المتبقي للدفع في الفندق'), 'pay': ('Payment', 'الدفع')}
+       'late': ('Late check-out fee', 'رسم المغادرة المتأخرة'), 'total': ('Total amount', 'المبلغ الإجمالي'), 'paid': ('Paid', 'المدفوع'), 'due': ('Balance due at the hotel', 'المتبقي للدفع في الفندق'), 'pay': ('Payment', 'الدفع')}
 SEC = {'res': ('Reservation', 'بيانات الحجز'), 'stay': ('Stay', 'الإقامة'), 'rate': ('Rate and payment', 'السعر والدفع'), 'pol': ('Hotel policies', 'سياسات الفندق')}
 VIA = {'web': ('Hotel website', 'موقع الفندق'), 'desk': ('Hotel reception', 'استقبال الفندق'), 'phone': ('Telephone', 'الهاتف'), 'agency': ('Travel agency', 'وكالة سفر'), 'referral': ('Referral', 'توصية')}
 LETTER = {
@@ -489,11 +640,16 @@ def doc_foot(addr):
             % (_esc(addr), HOTEL['phone'], HOTEL['email'], HOTEL['site']))
 
 
-def letter_html(r):
+def letter_html(r, S=None):
     """Printable confirmation letter. Styles and the print button come from static files (the site allows no inline code)."""
     e = _esc
     lang = 'en' if (r and r['lang'] == 'en') else 'ar'
-    L = LETTER[lang]; i, j = (0, 1) if lang == 'en' else (1, 0)
+    S = S or DEFAULTS
+    L = dict(LETTER[lang]); i, j = (0, 1) if lang == 'en' else (1, 0)
+    L['from14'] = L['from14'].replace('14:00', S['checkin']); L['until12'] = L['until12'].replace('12:00', S['checkout'])
+    L['t'] = list(L['t']) + [x for x in (late_text(S, lang),
+        (('A confirmed guest who does not arrive and does not cancel is charged the first night.' if lang == 'en' else 'في حال عدم الحضور دون إلغاء تُحتسب الليلة الأولى.') if S['noshow_on'] == '1' else None),
+        (('Early check-in before %s is subject to availability.' % S['checkin'] if lang == 'en' else 'الدخول المبكر قبل الساعة %s حسب التوفر.' % S['checkin']) if S['early_note'] == '1' else None)) if x]
     head = doc_head(lang, L['dir'], L['title'])
     if r is None or r['status'] != 'confirmed':
         msg = L['none'] if r is None else L['cancelled_h'] if r['status'] == 'cancelled' else L['pending_h']
@@ -525,7 +681,9 @@ def letter_html(r):
         rate = [('pay', e(L['by_agency'].format(a=agency)))]
     elif r['total']:
         paid = g('paid') or 0
-        rate = [('rate', '$%d' % round(r['total'] / max(1, r['nights']))), ('total', '<b class="tot">$%d</b> <small>(%s)</small>' % (r['total'], e(L['tax'])))]
+        rate = [('rate', '$%d' % round((r['total'] - (g('late_fee') or 0)) / max(1, r['nights']))), ('total', '<b class="tot">$%d</b> <small>(%s)</small>' % (r['total'], e(L['tax'])))]
+        if g('late_fee'):
+            rate.insert(1, ('late', '$%d' % g('late_fee')))
         if paid:
             rate += [('paid', '$%d' % paid), ('due', '<b>$%d</b>' % max(0, r['total'] - paid))]
         rate.append(('pay', e(L['at_hotel'])))
@@ -675,8 +833,8 @@ class H(BaseHTTPRequestHandler):
             if hmac.compare_digest(letter_key(m.group(1)), m.group(2)):
                 with db() as con:
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
-                    load_agencies(con)
-            return self.send(200 if r else 404, raw=letter_html(r).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'})
+                    load_agencies(con); S = settings(con)
+            return self.send(200 if r else 404, raw=letter_html(r, S if r else None).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'})
         m = re.fullmatch(r'/api/pricelist(?:/(\d+)/([0-9a-f]{20}))?', p)
         if m:
             agency = None
@@ -783,7 +941,23 @@ class H(BaseHTTPRequestHandler):
                         'arrivals': [row(x) for x in conf if x['check_in'] == ts],
                         'departures': [row(x) for x in conf if x['check_out'] == ts],
                         'tomorrow': [row(x) for x in conf if x['check_in'] == (today + dt.timedelta(days=1)).isoformat()],
-                        'newest': [row(x) for x in newest], 'rooms': rooms, 'week': week})
+                        'newest': [row(x) for x in newest], 'rooms': rooms, 'week': week,
+                        **(lambda t: {'rules': t[0], 'due_soon': t[1], 'late': t[2], 'no_show': t[3], 'clock': dt.datetime.now().strftime('%H:%M')})(desk_state(con)),
+                        'units_free': units_view(con, ts, free_only=True)})
+                if p == '/api/admin/settings':
+                    return self.send(200, {'ok': True, 'settings': settings(con), 'clock': dt.datetime.now().strftime('%H:%M')})
+                if p == '/api/admin/units':
+                    d0 = parse_day(q.get('date')) or dt.date.today()
+                    return self.send(200, {'ok': True, 'date': d0.isoformat(), 'units': units_view(con, d0.isoformat()),
+                                           'rooms': [{'id': k, 'name': v[1]} for k, v in ROOMS.items()]})
+                if p == '/api/admin/units/free':
+                    a, b = parse_day(q.get('in')), parse_day(q.get('out'))
+                    if not a or not b or b <= a:
+                        return self.send(400, {'ok': False})
+                    us = con.execute("SELECT * FROM units WHERE state!='out' ORDER BY length(no), no").fetchall()
+                    free = [{'no': u['no'], 'room': u['room'], 'state': u['state'], 'match': (not q.get('room')) or u['room'] == q.get('room')}
+                            for u in us if not unit_busy(con, u['no'], a.isoformat(), b.isoformat(), q.get('ref'))]
+                    return self.send(200, {'ok': True, 'defined': len(us) > 0, 'free': free})
                 if p == '/api/admin/closures':
                     rows = con.execute('SELECT * FROM closures WHERE date_to >= ? ORDER BY date_from', (dt.date.today().isoformat(),)).fetchall()
                     return self.send(200, {'ok': True, 'items': [dict(r) for r in rows]})
@@ -1045,6 +1219,87 @@ class H(BaseHTTPRequestHandler):
                 with db() as con:
                     con.execute('DELETE FROM rates WHERE id=?', (int(m.group(1)),))
                 return self.send(200, {'ok': True})
+            if p == '/api/admin/settings':
+                vals = {}
+                for k in DEFAULTS:
+                    if k not in d:
+                        continue
+                    v = str(d[k]).strip()
+                    if k in ('checkin', 'checkout', 'late_half_until'):
+                        if not TIME_RE.match(v):
+                            return self.send(400, {'ok': False, 'error': k})
+                    elif k in ('late_on', 'noshow_on', 'early_note'):
+                        v = '1' if d[k] in (True, 1, '1', 'on') else '0'
+                    else:
+                        try:
+                            n = float(v) if k == 'remind_hours' else int(v)
+                        except ValueError:
+                            return self.send(400, {'ok': False, 'error': k})
+                        lim = {'remind_hours': (0.5, 12), 'late_grace': (0, 240), 'late_half_pct': (0, 100), 'late_full_pct': (0, 100)}[k]
+                        if not lim[0] <= n <= lim[1]:
+                            return self.send(400, {'ok': False, 'error': k})
+                    vals[k] = v
+                with db() as con:
+                    S = dict(settings(con), **vals)
+                    if hm(S['late_half_until']) <= hm(S['checkout']) + int(S['late_grace']):
+                        return self.send(400, {'ok': False, 'error': 'late_half_until'})
+                    for k, v in vals.items():
+                        con.execute('INSERT OR REPLACE INTO settings(k,v) VALUES(?,?)', (k, v))
+                return self.send(200, {'ok': True})
+            if p == '/api/admin/units':
+                room = d.get('room')
+                if room not in ROOMS:
+                    return self.send(400, {'ok': False, 'error': 'room'})
+                nos = []
+                a, b = clean(d.get('no'), 12), clean(d.get('to'), 12)
+                if a.isdigit() and b.isdigit() and 0 <= int(b) - int(a) <= 200:
+                    nos = [str(x) for x in range(int(a), int(b) + 1)]
+                elif a and re.fullmatch(r'[0-9A-Za-z\-]{1,12}', a):
+                    nos = [a]
+                if not nos:
+                    return self.send(400, {'ok': False, 'error': 'no'})
+                added = 0
+                with LOCK, db() as con:
+                    for x in nos:
+                        if not con.execute('SELECT 1 FROM units WHERE no=?', (x,)).fetchone():
+                            con.execute('INSERT INTO units(no,room,floor) VALUES(?,?,?)', (x, room, clean(d.get('floor'), 12) or None)); added += 1
+                return self.send(200, {'ok': True, 'added': added, 'skipped': len(nos) - added})
+            m = re.fullmatch(r'/api/admin/units/(\d+)(/delete)?', p)
+            if m:
+                with db() as con:
+                    if m.group(2):
+                        con.execute('DELETE FROM units WHERE id=?', (int(m.group(1)),))
+                    else:
+                        if d.get('state') in ('clean', 'dirty', 'out'):
+                            con.execute('UPDATE units SET state=? WHERE id=?', (d['state'], int(m.group(1))))
+                        if d.get('room') in ROOMS:
+                            con.execute('UPDATE units SET room=? WHERE id=?', (d['room'], int(m.group(1))))
+                        if 'note' in d:
+                            con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))
+                return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/late', p)
+            if m:
+                # late check-out fee by the hotel's rule: a share of the last night's rate, added to the total
+                with LOCK, db() as con:
+                    cur = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                    if not cur or cur['status'] != 'confirmed':
+                        return self.send(404, {'ok': False})
+                    S = settings(con); rate = night_rate(con, cur)
+                    try:
+                        fee = int(d['amount']) if d.get('amount') not in (None, '') else None
+                    except (TypeError, ValueError):
+                        return self.send(400, {'ok': False})
+                    if fee is None:
+                        if rate is None:
+                            return self.send(400, {'ok': False, 'error': 'rate'})
+                        fee = int(round(rate * int(S['late_full_pct' if d.get('kind') == 'full' else 'late_half_pct']) / 100.0))
+                    if not 0 <= fee <= 100000:
+                        return self.send(400, {'ok': False})
+                    base = (cur['total'] or 0) - (cur['late_fee'] or 0)       # replaces an earlier late fee, never stacks
+                    total = base + fee
+                    con.execute('UPDATE bookings SET late_fee=?, total=?, net=?, updated=? WHERE ref=?', (fee or None, total, net_of(con, total, cur['agency_id']), now(), m.group(1)))
+                    r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                return self.send(200, {'ok': True, 'fee': fee, 'item': row(r)})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/stay', p)
             if m:
                 # change the check-out date: extend or shorten a stay. {out, preview} -> what it costs; without preview it is saved.
@@ -1091,6 +1346,12 @@ class H(BaseHTTPRequestHandler):
                     except (TypeError, ValueError):
                         return self.send(400, {'ok': False, 'error': 'paid'})
                     room_no = cur['room_no'] if 'room_no' not in d else (clean(d.get('room_no'), 12) or None)
+                    if room_no and room_no != cur['room_no'] and (st or cur['status']) == 'confirmed':
+                        clash = unit_busy(con, room_no, cur['check_in'], cur['check_out'], cur['ref'])
+                        if clash and not d.get('force'):
+                            return self.send(409, {'ok': False, 'error': 'room_taken', 'by': clash['name'], 'ref': clash['ref']})
+                    if d.get('no_show'):
+                        st = 'cancelled'; d['note'] = ((cur['staff_note'] or '') + ' · عدم حضور (No-show)').strip(' ·')
                     arrived = cur['arrived'] if 'arrived' not in d else (now() if d['arrived'] else None)
                     departed = cur['departed'] if 'departed' not in d else (now() if d['departed'] else None)
                     aid, pay_by, src = cur['agency_id'], cur['pay_by'], cur['source']
@@ -1108,6 +1369,12 @@ class H(BaseHTTPRequestHandler):
                         elif not aid and src == 'agency':
                             src = 'desk'
                     referrer = cur['referrer'] if 'referrer' not in d else (clean(d.get('referrer'), 80) or None)
+                    if departed and not cur['departed'] and room_no:
+                        con.execute("UPDATE units SET state='dirty' WHERE no=? AND state='clean'", (room_no,))
+                    if d.get('reminded'):
+                        con.execute('UPDATE bookings SET reminded=? WHERE ref=?', (now(), m.group(1)))
+                    if d.get('no_show'):
+                        con.execute('UPDATE bookings SET no_show=1 WHERE ref=?', (m.group(1),))
                     con.execute('UPDATE bookings SET status=?, staff_note=?, room_no=?, paid=?, arrived=?, departed=?, agency_id=?, pay_by=?, source=?, referrer=?, net=?, updated=? WHERE ref=?',
                                 (st or cur['status'], clean(d.get('note', cur['staff_note']), 400) or None, room_no, paid, arrived, departed, aid, pay_by, src, referrer, net_of(con, cur['total'], aid), now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
@@ -1150,5 +1417,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     init()
+    threading.Thread(target=reminder_loop, daemon=True).start()
     print(f'booking api on {HOST}:{PORT}, data in {DATA}', flush=True)
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

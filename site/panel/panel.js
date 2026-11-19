@@ -3,7 +3,7 @@
   'use strict';
   var $ = function (s) { return document.querySelector(s); };
   var each = function (sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn); };
-  var tab = 'home', ROOMS = [], ITEMS = [], AGS = [];
+  var tab = 'home', ROOMS = [], ITEMS = [], AGS = [], RULES = { checkout: '12:00', checkin: '14:00' };
   var LABEL = { 'new': 'جديد', confirmed: 'مؤكَّد', cancelled: 'ملغى' };
   var DAYS = ['أحد', 'إثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت'];
   var DAYS_LONG = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -57,9 +57,9 @@
   function load() {
     var list = tab === 'new' || tab === 'active' || tab === 'all';
     $('#view-list').hidden = !list;
-    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
+    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies', 'rack', 'rules'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
     if (list) loadList(); else if (tab === 'home') loadHome(); else if (tab === 'closures') loadClosures(); else if (tab === 'inventory') loadInventory();
-    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers();
+    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'rack') { rooms(); loadRack(); } else if (tab === 'rules') loadRules(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers();
   }
 
   // the count of waiting requests shows on the menu and in the browser tab title, on every screen
@@ -85,6 +85,65 @@
       box.appendChild(r);
     });
   }
+  function waLink(b, text, label, cls) { var a = el('a', 'btn ' + (cls || 'wa'), label); a.target = '_blank'; a.rel = 'noopener'; a.href = 'https://wa.me/' + digits(b.phone) + '?text=' + encodeURIComponent(text); return a; }
+  function lateRule(en) {
+    if (RULES.late_on !== '1') return '';
+    return en ? ' Late check-out is subject to availability: ' + RULES.late_half_pct + '% of the nightly rate until ' + RULES.late_half_until + ', a full extra night after that.'
+      : ' المغادرة المتأخرة حسب التوفر: ' + RULES.late_half_pct + '% من سعر الليلة حتى الساعة ' + RULES.late_half_until + '، وبعدها ليلة إضافية كاملة.';
+  }
+  function act(ref, path, data, msg) { return api('bookings/' + ref + (path || ''), data).then(function (j) { if (j.ok) { toast(msg); loadHome(); } else if (!gone(j)) toast(j.error === 'rate' ? 'لا يوجد سعر لهذه الغرفة. اكتب المبلغ يدوياً من بطاقة الحجز.' : 'لم يتم الحفظ'); return j; }); }
+  var lastSoon = '';
+  function deskAlerts(j) {
+    var box = $('#home-desk'); box.textContent = '';
+    function block(cls, title, items, each2) {
+      if (!items.length) return;
+      var c = el('div', 'card desk-alert ' + cls); c.appendChild(el('h2', null, title + ' (' + items.length + ')'));
+      items.forEach(function (b) {
+        var r = el('div', 'mini'); r.appendChild(el('b', null, b.name + (b.room_no ? ' · غرفة ' + b.room_no : '')));
+        var sub = el('span', 'm-sub'); r.appendChild(sub); each2(b, r, sub); box.appendChild(c); c.appendChild(r);
+      });
+    }
+    block('soon', 'مغادرة قريبة: الموعد الساعة ' + RULES.checkout, j.due_soon, function (b, r, sub) {
+      sub.textContent = (b.minutes_left > 0 ? 'باقٍ ' + b.minutes_left + ' دقيقة' : 'انتهى الموعد، ضمن المهلة') + ' · ' + b.room_name + (b.reminded ? ' · تم تذكير الضيف' : '');
+      if (b.phone && b.phone !== '-') {
+        var t = b.lang === 'en' ? 'Hello ' + b.name + ', a kind reminder from Royal Inn Tartus: check-out is today at ' + RULES.checkout + '. If you would like to stay longer, please let reception know now.' + lateRule(true)
+          : 'مرحباً ' + b.name + '، تذكير لطيف من فندق رويال إن طرطوس: موعد المغادرة اليوم الساعة ' + RULES.checkout + '. إذا رغبتم بتمديد الإقامة أخبروا الاستقبال الآن.' + lateRule(false);
+        var w = waLink(b, t, b.reminded ? 'تذكير مرة أخرى' : 'ذكّر الضيف (واتساب)'); w.addEventListener('click', function () { api('bookings/' + b.ref, { reminded: true, note: b.staff_note || '' }); }); r.appendChild(w);
+      }
+      var d = el('button', 'ghost btn', 'تسجيل المغادرة'); d.type = 'button'; d.addEventListener('click', function () { act(b.ref, '', { departed: true, note: b.staff_note || '' }, 'تم تسجيل المغادرة'); }); r.appendChild(d);
+    });
+    block('late', 'تأخّروا عن المغادرة', j.late, function (b, r, sub) {
+      sub.textContent = (b.late_minutes != null ? 'متأخر ' + Math.floor(b.late_minutes / 60) + ' س ' + (b.late_minutes % 60) + ' د' : 'موعد المغادرة كان ' + fmt(b.check_out)) + (b.late_fee ? ' · رسم مسجَّل $' + b.late_fee : '');
+      if (RULES.late_on === '1' && b.fee != null && b.stage === 'half') { var h = el('button', 'ghost btn', 'رسم نصف يوم $' + b.fee); h.type = 'button'; h.addEventListener('click', function () { if (confirm('إضافة رسم مغادرة متأخرة $' + b.fee + ' إلى حساب ' + b.name + '؟')) act(b.ref, '/late', { kind: 'half' }, 'أُضيف الرسم'); }); r.appendChild(h); }
+      var nx = new Date(); nx.setDate(nx.getDate() + 1);
+      var n1 = el('button', 'gold btn', 'ليلة إضافية (+1)'); n1.type = 'button';
+      n1.addEventListener('click', function () {
+        api('bookings/' + b.ref + '/stay', { out: iso(nx), preview: true }).then(function (p) {
+          if (!p.ok) { toast('لم يتم الحفظ'); return; }
+          var q = 'تمديد إقامة ' + b.name + ' حتى ' + fmt(iso(nx)) + (p.amount != null ? ' · الفرق +$' + p.amount : '') + (p.available ? '' : '\nتنبيه: الغرف من هذا النوع مكتملة الليلة.') + '\nمتابعة؟';
+          if (confirm(q)) act(b.ref, '/stay', { out: iso(nx), force: true }, 'أُضيفت ليلة');
+        });
+      });
+      r.appendChild(n1);
+      if (b.phone && b.phone !== '-') r.appendChild(waLink(b, b.lang === 'en' ? 'Hello ' + b.name + ', this is Royal Inn Tartus reception. Check-out time (' + RULES.checkout + ') has passed. Would you like to extend your stay?' + lateRule(true)
+        : 'مرحباً ' + b.name + '، معكم استقبال فندق رويال إن طرطوس. انتهى موعد المغادرة (' + RULES.checkout + '). هل ترغبون بتمديد الإقامة؟' + lateRule(false), 'واتساب'));
+      var d = el('button', 'ghost btn', 'تسجيل المغادرة'); d.type = 'button'; d.addEventListener('click', function () { act(b.ref, '', { departed: true, note: b.staff_note || '' }, 'تم تسجيل المغادرة'); }); r.appendChild(d);
+    });
+    block('noshow', 'لم يُسجَّل وصولهم بعد', j.no_show, function (b, r, sub) {
+      sub.textContent = 'كان الوصول ' + fmt(b.check_in) + ' · ' + b.room_name;
+      var a1 = el('button', 'gold btn', 'وصل الضيف'); a1.type = 'button'; a1.addEventListener('click', function () { act(b.ref, '', { arrived: true, note: b.staff_note || '' }, 'تم تسجيل الوصول'); }); r.appendChild(a1);
+      if (b.phone && b.phone !== '-') { var t = el('a', 'btn ghost', 'اتصال'); t.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); r.appendChild(t); }
+      var ns = el('button', 'ghost danger btn', 'لم يحضر (إلغاء)'); ns.type = 'button'; ns.addEventListener('click', function () { if (confirm('تسجيل عدم حضور ' + b.name + ' وإلغاء الحجز؟ الغرفة تعود متاحة.')) act(b.ref, '', { no_show: true }, 'سُجِّل عدم الحضور'); }); r.appendChild(ns);
+    });
+    // a browser notification the first time a guest enters the reminder window (only if the manager allowed notifications)
+    var key = j.due_soon.map(function (b) { return b.ref; }).join(',');
+    if (key && key !== lastSoon && window.Notification && Notification.permission === 'granted') { try { new Notification('Royal Inn: مغادرة قريبة', { body: j.due_soon.map(function (b) { return b.name + (b.room_no ? ' (' + b.room_no + ')' : ''); }).join('، ') }); } catch (e) {} }
+    lastSoon = key;
+    if (window.Notification && Notification.permission === 'default') {
+      var nb = el('button', 'ghost sm', 'تفعيل التنبيهات على هذا الجهاز'); nb.type = 'button'; nb.addEventListener('click', function () { Notification.requestPermission().then(function () { loadHome(); }); });
+      var w2 = el('p', 'muted small'); w2.appendChild(nb); box.appendChild(w2);
+    }
+  }
   function loadHome() {
     api('dashboard').then(function (j) {
       if (gone(j) || !j.ok) return;
@@ -99,6 +158,10 @@
         var bt = el('button', 'gold sm', 'أدخل عدد الغرف'); bt.type = 'button'; bt.addEventListener('click', function () { go('inventory'); }); n.appendChild(bt);
         alertBox.appendChild(n);
       }
+      RULES = j.rules || RULES; deskAlerts(j);
+      var fr = $('#home-free'); fr.textContent = '';
+      $('#free-hint').textContent = j.units_free.length ? 'غرف غير مشغولة وغير محجوزة اليوم. الرمادي يحتاج تنظيفاً أولاً.' : 'تظهر هنا أرقام الغرف المتاحة بعد إضافة أرقام الغرف من «الغرف».';
+      j.units_free.forEach(function (u) { fr.appendChild(el('span', 'chip' + (u.state === 'dirty' ? ' dirty' : ''), u.no + ' · ' + roomName(u.room))); });
       var k = $('#kpis'); k.textContent = '';
       k.appendChild(kpi(j.counts['new'] || 0, 'طلبات جديدة تنتظر الرد', (j.counts['new'] ? 'hot' : ''), 'new'));
       k.appendChild(kpi(j.arrivals.length, 'وصول اليوم'));
@@ -199,6 +262,12 @@
     if (b.status === 'confirmed') {
       var desk = el('div', 'desk');
       var l1 = el('label', null, 'رقم الغرفة'); roomNo = el('input'); roomNo.type = 'text'; roomNo.maxLength = 12; roomNo.value = b.room_no || ''; roomNo.dir = 'ltr'; l1.appendChild(roomNo); desk.appendChild(l1);
+      var dl = el('datalist'); dl.id = 'free-' + b.ref; roomNo.setAttribute('list', dl.id); roomNo.placeholder = 'اختر من المتاح'; l1.appendChild(dl);
+      var hint = el('small', 'muted'); l1.appendChild(hint);
+      roomNo.addEventListener('focus', function () { if (dl.loaded) return; dl.loaded = 1; api('units/free?in=' + b.check_in + '&out=' + b.check_out + '&ref=' + b.ref + (b.room ? '&room=' + b.room : '')).then(function (j) {
+        if (!j.ok || !j.defined) return; var same = j.free.filter(function (u) { return u.match; });
+        (same.length ? same : j.free).forEach(function (u) { var o = el('option'); o.value = u.no; o.label = roomName(u.room) + (u.state === 'dirty' ? ' · تحتاج تنظيف' : ''); dl.appendChild(o); });
+        hint.textContent = same.length ? 'المتاح: ' + same.map(function (u) { return u.no; }).slice(0, 12).join('، ') : 'لا غرف متاحة من هذا النوع في هذه التواريخ'; }); });
       var l2 = el('label', null, 'المدفوع $'); paid = el('input'); paid.type = 'number'; paid.min = 0; paid.inputMode = 'numeric'; paid.value = b.paid == null ? '' : b.paid; l2.appendChild(paid); desk.appendChild(l2);
       var l4 = el('label', null, 'الوكالة'); agSel = el('select'); var o0 = el('option', null, 'بدون وكالة'); o0.value = ''; agSel.appendChild(o0);
       AGS.forEach(function (a) { var o = el('option', null, a.name); o.value = a.id; agSel.appendChild(o); }); agSel.value = b.agency_id || ''; l4.appendChild(agSel); desk.appendChild(l4);
@@ -296,6 +365,7 @@
     api('bookings/' + ref, data).then(function (j) {
       if (j.ok) { if (st === 'confirmed' && tab === 'new') { toast('تم تأكيد الحجز. أرسل الآن رسالة التأكيد للزبون.'); return go('active'); }
         toast(st === 'confirmed' ? 'تم تأكيد الحجز' : st === 'cancelled' ? 'تم الإلغاء' : st === 'new' ? 'أُعيد إلى الطلبات الجديدة' : 'تم الحفظ'); loadList(); }
+      else if (j.error === 'room_taken') toast('هذه الغرفة محجوزة في هذه التواريخ للضيف: ' + j.by);
       else if (!gone(j) && j.status) { toast('لم يتم الحفظ'); loadList(); }
     });
   }
@@ -417,6 +487,59 @@
       agency_id: f.agency_id.value, pay_by: f.pay_by.value, referrer: f.referrer.value, lang: f.lang.value }).then(function (j) {
       if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
     });
+  });
+
+  /* ---------------------------------------------------------------- room rack */
+  var UST = { free: 'جاهزة', occupied: 'مشغولة', arriving: 'محجوزة', leaving: 'مغادرة اليوم', dirty: 'تحتاج تنظيف', out: 'خارج الخدمة' };
+  function loadRack() {
+    var di = $('#rack-date'); if (!di.value) di.value = iso(new Date());
+    api('units?date=' + di.value).then(function (j) {
+      if (gone(j) || !j.ok) return;
+      var box = $('#rack'); box.textContent = ''; var cnt = {};
+      if (!j.units.length) { box.appendChild(el('p', 'empty', 'لم تُضَف أرقام الغرف بعد. أضفها من النموذج في الأسفل.')); $('#rack-sum').textContent = ''; return; }
+      var groups = {};
+      j.units.forEach(function (u) { cnt[u.state] = (cnt[u.state] || 0) + 1; (groups[u.room_name] = groups[u.room_name] || []).push(u); });
+      $('#rack-sum').textContent = Object.keys(UST).filter(function (k) { return cnt[k]; }).map(function (k) { return UST[k] + ': ' + cnt[k]; }).join(' · ');
+      Object.keys(groups).forEach(function (g) {
+        var c = el('div', 'card'); c.appendChild(el('h2', null, g + ' (' + groups[g].length + ')')); var grid = el('div', 'rack');
+        groups[g].forEach(function (u) {
+          var t = el('div', 'unit u-' + u.state);
+          t.appendChild(el('b', null, u.no)); t.appendChild(el('span', 'u-st', UST[u.state] + (u.floor ? ' · ط ' + u.floor : '')));
+          if (u.guest) t.appendChild(el('span', 'u-g', u.guest + ' · حتى ' + fmt(u.until).slice(0, 5)));
+          var row = el('div', 'u-act');
+          function b(label, data, del) { var x = el('button', 'ghost sm', label); x.type = 'button'; x.addEventListener('click', function () { if (del && !confirm('حذف الغرفة ' + u.no + ' من القائمة؟')) return; api('units/' + u.id + (del ? '/delete' : ''), data).then(function () { loadRack(); }); }); row.appendChild(x); }
+          if (u.clean === 'dirty') b('نُظِّفت', { state: 'clean' });
+          else if (u.clean === 'clean' && !u.guest) b('تحتاج تنظيف', { state: 'dirty' });
+          if (u.clean === 'out') b('إعادة للخدمة', { state: 'clean' }); else if (!u.guest) { b('خارج الخدمة', { state: 'out' }); b('حذف', {}, true); }
+          t.appendChild(row); grid.appendChild(t);
+        });
+        c.appendChild(grid); box.appendChild(c);
+      });
+    });
+  }
+  $('#rack-date').addEventListener('change', loadRack);
+  $('#rack-today').addEventListener('click', function () { $('#rack-date').value = iso(new Date()); loadRack(); });
+  $('#unit-form').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target;
+    api('units', { no: f.no.value, to: f.to.value, room: f.room.value, floor: f.floor.value }).then(function (j) {
+      if (j.ok) { toast('أُضيفت ' + j.added + ' غرفة' + (j.skipped ? ' · موجودة مسبقاً: ' + j.skipped : '')); f.no.value = ''; f.to.value = ''; loadRack(); } else if (!gone(j) && j.status) toast('تحقّق من الأرقام ونوع الغرفة');
+    });
+  });
+
+  /* ---------------------------------------------------------------- hotel times and policies */
+  function loadRules() {
+    api('settings').then(function (j) {
+      if (gone(j) || !j.ok) return; var f = $('#rules-form'), s = j.settings; RULES = s;
+      ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { f[k].value = s[k]; });
+      ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { f[k].checked = s[k] === '1'; });
+      $('#rules-clock').textContent = 'ساعة الفندق الآن: ' + j.clock;
+    });
+  }
+  $('#rules-form').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target, d = {};
+    ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { d[k] = f[k].value; });
+    ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { d[k] = f[k].checked; });
+    api('settings', d).then(function (j) { if (j.ok) { toast('تم الحفظ'); loadRules(); } else if (!gone(j) && j.status) toast(j.error === 'late_half_until' ? 'موعد نصف اليوم يجب أن يكون بعد موعد المغادرة والمهلة' : 'تحقّق من القيم'); });
   });
 
   /* ---------------------------------------------------------------- agencies and their accounts */

@@ -7,8 +7,8 @@
 <title>لوحة الحجوزات | رويال إن</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
-<link rel="stylesheet" href="/panel/panel.css?v=8">
-<script src="/panel/panel.js?v=8" defer></script>
+<link rel="stylesheet" href="/panel/panel.css?v=9">
+<script src="/panel/panel.js?v=9" defer></script>
 </head>
 <body>
 <header class="top">
@@ -36,11 +36,13 @@
       <button data-tab="active"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg><span>الحجوزات القادمة</span></button>
       <button data-tab="all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span>كل الطلبات</span></button>
       <button data-tab="occupancy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M4 14h16M9 4v16M14 4v16"/></svg><span>الإشغال</span></button>
+      <button data-tab="rack"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17M3 21h18M15 12h.01"/></svg><span>الغرف</span></button>
       <button data-tab="add"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>حجز جديد</span></button>
       <button data-tab="agencies"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20V8l6-4v16M9 20V10h12v10M3 20h18M13 14h.01M17 14h.01M13 17h.01M17 17h.01"/></svg><span>الوكالات والحسابات</span></button>
       <span class="tabs-sep" aria-hidden="true">الإعدادات</span>
       <button data-tab="prices"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8zM7.5 8.5h.01"/></svg><span>الأسعار</span></button>
       <button data-tab="offers"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-1.5-3-5-3.500-5-1.500S10 7 12 7zm0 0c1.500-3 5-3.500 5-1.500S14 7 12 7z"/></svg><span>العروض والخصومات</span></button>
+      <button data-tab="rules"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg><span>المواعيد والسياسات</span></button>
       <button data-tab="closures"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3"/></svg><span>أيام مكتملة</span></button>
       <button data-tab="inventory"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18V8M3 14h18v4M21 14v-2a3 3 0 0 0-3-3h-7v5M7 12a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg><span>عدد الغرف</span></button>
     </nav>
@@ -49,6 +51,7 @@
     <div id="view-home">
       <div class="page-head"><h1 id="home-title">اليوم</h1><button class="ghost sm" id="home-refresh" type="button">تحديث</button></div>
       <div id="home-alert"></div>
+      <div id="home-desk"></div>
       <div class="kpis" id="kpis"></div>
       <p class="muted small" id="home-inhouse"></p>
       <div class="cols2">
@@ -59,6 +62,7 @@
         <div class="card"><h2>وصول اليوم</h2><div id="home-arr"></div></div>
         <div class="card"><h2>مغادرة اليوم</h2><div id="home-dep"></div></div>
       </div>
+      <div class="card"><h2>غرف جاهزة للتسليم الآن</h2><p class="muted small" id="free-hint"></p><div class="chips" id="home-free"></div></div>
       <div class="cols2">
         <div class="card"><h2>وصول غداً</h2><div id="home-tom"></div></div>
         <div class="card"><h2>أحدث الطلبات الجديدة</h2><div id="home-new"></div></div>
@@ -78,6 +82,45 @@
       <div class="card scroll"><table id="occ" class="occ"></table></div>
       <div class="card" id="day-box" hidden><div class="page-head"><h2 id="day-title"></h2><button class="ghost sm" id="day-close" type="button">إغلاق</button></div>
         <div class="cols3"><div><h3>الوصول</h3><div id="day-arr"></div></div><div><h3>المغادرة</h3><div id="day-dep"></div></div><div><h3>المقيمون</h3><div id="day-stay"></div></div></div></div>
+    </div>
+
+    <div id="view-rack" hidden>
+      <div class="page-head"><h1>الغرف</h1><span><input type="date" id="rack-date" aria-label="التاريخ"> <button class="ghost sm" id="rack-today" type="button">اليوم</button></span></div>
+      <p class="legend"><span><i class="lg u-free"></i>جاهزة</span><span><i class="lg u-occupied"></i>مشغولة</span><span><i class="lg u-arriving"></i>محجوزة، الضيف لم يصل</span><span><i class="lg u-leaving"></i>مغادرة اليوم</span><span><i class="lg u-dirty"></i>تحتاج تنظيف</span><span><i class="lg u-out"></i>خارج الخدمة</span></p>
+      <div id="rack-sum" class="muted small"></div>
+      <div id="rack"></div>
+      <div class="card">
+        <h2>إضافة أرقام الغرف</h2>
+        <p class="muted">تُعمل مرة واحدة. لإضافة عدة غرف دفعة واحدة اكتب «من» و«إلى» (مثلاً من 101 إلى 110). لغرفة واحدة اترك «إلى» فارغاً. بعدها تختار رقم الغرفة لكل حجز من قائمة الغرف المتاحة.</p>
+        <form id="unit-form" class="row">
+          <label>من رقم<input type="text" name="no" maxlength="12" dir="ltr" required></label>
+          <label>إلى رقم (اختياري)<input type="text" name="to" maxlength="12" dir="ltr"></label>
+          <label>نوع الغرفة<select name="room" class="room-select" required><option value="">اختر النوع</option></select></label>
+          <label>الطابق (اختياري)<input type="text" name="floor" maxlength="12"></label>
+          <button class="gold" type="submit">إضافة</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="view-rules" hidden>
+      <div class="page-head"><h1>المواعيد والسياسات</h1><span class="muted" id="rules-clock"></span></div>
+      <div class="card">
+        <h2>مواعيد الدخول والمغادرة والتذكير</h2>
+        <form id="rules-form" class="grid2">
+          <label>الدخول من الساعة<input type="time" name="checkin" required></label>
+          <label>المغادرة حتى الساعة<input type="time" name="checkout" required></label>
+          <label>تذكير قبل موعد المغادرة بـ (ساعات)<input type="number" name="remind_hours" min="0.5" max="12" step="0.5" required></label>
+          <label>مهلة مجانية بعد موعد المغادرة (دقائق)<input type="number" name="late_grace" min="0" max="240" required></label>
+          <label class="inline wide"><input type="checkbox" name="late_on"> تطبيق رسم المغادرة المتأخرة وإظهاره في رسالة التأكيد</label>
+          <label>نصف يوم: حتى الساعة<input type="time" name="late_half_until" required></label>
+          <label>رسم نصف اليوم (% من سعر الليلة)<input type="number" name="late_half_pct" min="0" max="100" required></label>
+          <label>بعد ذلك: ليلة إضافية (% من سعر الليلة)<input type="number" name="late_full_pct" min="0" max="100" required></label>
+          <label class="inline wide"><input type="checkbox" name="noshow_on"> كتابة سياسة عدم الحضور في رسالة التأكيد (تُحتسب الليلة الأولى)</label>
+          <label class="inline wide"><input type="checkbox" name="early_note"> كتابة «الدخول المبكر حسب التوفر» في رسالة التأكيد</label>
+          <button class="gold" type="submit">حفظ</button>
+        </form>
+        <p class="muted small">الأرقام الافتراضية هي المتعارف عليها في الفنادق: مغادرة 12:00، نصف سعر الليلة حتى 18:00، وبعدها ليلة كاملة. عدّلوها حسب قرار الإدارة. ما تحفظونه هنا يُكتب للضيف في رسالة التأكيد ورسالة التذكير.</p>
+      </div>
     </div>
 
     <div id="view-add" hidden>
