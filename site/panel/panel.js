@@ -326,6 +326,7 @@
         act.insertBefore(cw, act.firstChild);
       }
       var lt = el('a', 'btn ghost', 'رسالة التأكيد (طباعة)'); lt.href = b.letter; lt.target = '_blank'; lt.rel = 'noopener'; act.appendChild(lt);
+      if (b.email) { var mb = el('button', 'ghost', 'أرسل التأكيد بالبريد'); mb.type = 'button'; mb.addEventListener('click', function () { mb.disabled = true; api('bookings/' + b.ref + '/mail', {}).then(function (j) { mb.disabled = false; if (gone(j)) return; toast(j.ok ? 'أُرسل البريد إلى ' + b.email : j.error === 'mail_off' ? 'البريد غير مفعَّل بعد' : 'فشل إرسال البريد'); }); }); act.appendChild(mb); }
     }
     if (b.status !== 'confirmed') act.appendChild(button('تأكيد الحجز', 'gold', 'confirmed'));
     if (b.status !== 'cancelled') act.appendChild(button('إلغاء', 'ghost danger', 'cancelled'));
@@ -396,7 +397,7 @@
     var data = { note: note }; if (st) data.status = st;
     if (more) { for (var k in more) data[k] = more[k]; }
     api('bookings/' + ref, data).then(function (j) {
-      if (j.ok) { if (st === 'confirmed' && tab === 'new') { toast('تم تأكيد الحجز. أرسل الآن رسالة التأكيد للزبون.'); return go('active'); }
+      if (j.ok) { if (st === 'confirmed' && tab === 'new') { toast(j.mailed ? 'تم تأكيد الحجز وأُرسل التأكيد إلى بريد الزبون.' : 'تم تأكيد الحجز. أرسل الآن رسالة التأكيد للزبون.'); return go('active'); }
         toast(st === 'confirmed' ? 'تم تأكيد الحجز' : st === 'cancelled' ? 'تم الإلغاء' : st === 'new' ? 'أُعيد إلى الطلبات الجديدة' : 'تم الحفظ'); loadList(); }
       else if (j.error === 'room_taken') toast('هذه الغرفة محجوزة في هذه التواريخ للضيف: ' + j.by);
       else if (!gone(j) && j.status) { toast('لم يتم الحفظ'); loadList(); }
@@ -515,10 +516,10 @@
     e.preventDefault(); var f = e.target;
     if (f.source.value === 'agency' && !f.agency_id.value) { toast('اختر الوكالة، أو أضفها أولاً من «الوكالات والحسابات»'); return; }
     if (f.out.value <= f['in'].value) { toast('تاريخ المغادرة يجب أن يكون بعد تاريخ الوصول'); return; }
-    api('bookings/new', { name: f.name.value, phone: f.phone.value, 'in': f['in'].value, out: f.out.value, room: f.room.value,
+    api('bookings/new', { name: f.name.value, phone: f.phone.value, email: f.email.value, 'in': f['in'].value, out: f.out.value, room: f.room.value,
       guests: f.guests.value, total: f.total.value, note: f.note.value, breakfast: f.breakfast.checked, source: f.source.value,
       agency_id: f.agency_id.value, pay_by: f.pay_by.value, referrer: f.referrer.value, lang: f.lang.value }).then(function (j) {
-      if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
+      if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref + (j.mailed ? ' · أُرسل التأكيد بالبريد' : '')); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
     });
   });
 
@@ -566,6 +567,7 @@
       ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { f[k].value = s[k]; });
       ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { f[k].checked = s[k] === '1'; });
       $('#rules-clock').textContent = 'ساعة الفندق الآن: ' + j.clock;
+      $('#mail-state').textContent = j.mail ? 'الحالة: مفعَّل. الرسائل تُرسل تلقائياً.' : 'الحالة: غير مفعَّل بعد. يجب ربط صندوق بريد من إعدادات الخادم (يقوم به محمود).';
     });
   }
   $('#rules-form').addEventListener('submit', function (e) {
@@ -573,6 +575,10 @@
     ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { d[k] = f[k].value; });
     ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { d[k] = f[k].checked; });
     api('settings', d).then(function (j) { if (j.ok) { toast('تم الحفظ'); loadRules(); } else if (!gone(j) && j.status) toast(j.error === 'late_half_until' ? 'موعد نصف اليوم يجب أن يكون بعد موعد المغادرة والمهلة' : 'تحقّق من القيم'); });
+  });
+
+  $('#mailtest-form').addEventListener('submit', function (e) {
+    e.preventDefault(); api('mail-test', { to: e.target.to.value }).then(function (j) { if (gone(j)) return; toast(j.ok ? 'أُرسلت الرسالة التجريبية' : j.error === 'mail_off' ? 'البريد غير مفعَّل بعد' : 'فشل الإرسال: تحقّق من إعدادات البريد'); });
   });
 
   /* ---------------------------------------------------------------- agencies and their accounts */

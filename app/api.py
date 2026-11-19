@@ -344,32 +344,92 @@ def smtp_send(m):
     s.send_message(m); s.quit()
 
 
-def mail_confirmation(b):
-    """When the hotel confirms a booking and the guest left an e-mail address, send them the confirmation link.
-    Only works once the hotel's mailbox is set up (SMTP_HOST, SMTP_USER, SMTP_PASS)."""
-    if not os.environ.get('SMTP_HOST') or not b.get('email'):
-        return
+def mail_on():
+    return bool(os.environ.get('SMTP_HOST') and (os.environ.get('MAIL_FROM') or os.environ.get('SMTP_USER')))
+
+
+def send_mail(to, subject, text, html=None):
+    """One e-mail from the hotel to a guest. True when the mail server accepted it."""
+    if not mail_on() or not to:
+        return False
     try:
-        en = b.get('lang') == 'en'
-        link = 'https://royalinntartus.com/api/confirmation/%s/%s' % (b['ref'], letter_key(b['ref']))
+        from email.utils import formataddr
         m = EmailMessage()
-        m['Subject'] = ('Booking confirmed %s - Royal Inn Tartus' if en else 'تأكيد الحجز %s - فندق رويال إن طرطوس') % b['ref']
-        m['From'] = os.environ.get('SMTP_USER') or os.environ.get('NOTIFY_TO', '')
-        m['To'] = b['email']
-        if en:
-            lines = ['Dear %s,' % b['name'], '', 'Your booking at Royal Inn Tartus is confirmed.', 'Booking number: %s' % b['ref'],
-                     'Check-in: %s (from 14:00)' % b['check_in'], 'Check-out: %s (until 12:00)' % b['check_out'],
-                     ('Total: $%s, tax included' % b['total']) if b.get('total') else '', '', 'Your confirmation letter: ' + link, '',
-                     'Reservations, Royal Inn Hotel', HOTEL['phone']]
-        else:
-            lines = ['السيد/ة %s المحترم/ة،' % b['name'], '', 'تم تأكيد حجزكم في فندق رويال إن طرطوس.', 'رقم الحجز: %s' % b['ref'],
-                     'الوصول: %s (من الساعة 14:00)' % b['check_in'], 'المغادرة: %s (حتى الساعة 12:00)' % b['check_out'],
-                     ('المبلغ الإجمالي: %s$ شامل الضريبة' % b['total']) if b.get('total') else '', '', 'رسالة التأكيد: ' + link, '',
-                     'إدارة الحجوزات، فندق رويال إن', HOTEL['phone']]
-        m.set_content('\n'.join(lines))
+        m['Subject'] = subject
+        m['From'] = formataddr(('Royal Inn Tartus', os.environ.get('MAIL_FROM') or os.environ['SMTP_USER']))
+        m['To'] = to
+        if os.environ.get('REPLY_TO'):
+            m['Reply-To'] = os.environ['REPLY_TO']
+        m.set_content(text)
+        if html:
+            m.add_alternative(html, subtype='html')
         smtp_send(m)
+        return True
     except Exception as e:
-        print('confirmation mail failed:', type(e).__name__, flush=True)
+        print('guest mail failed:', type(e).__name__, flush=True)
+        return False
+
+
+def mail_html(lang, title, hello, intro, rows, button=None, notes=()):
+    """A simple branded e-mail (inline styles, because mail programs ignore style sheets)."""
+    import html as _h
+    e = lambda x: _h.escape(str(x), quote=True)
+    d = 'ltr' if lang == 'en' else 'rtl'; al = 'left' if lang == 'en' else 'right'
+    tr = ''.join('<tr><td style="padding:9px 14px;border-bottom:1px solid #ece6da;color:#64727b;width:42%%">%s</td><td style="padding:9px 14px;border-bottom:1px solid #ece6da;color:#17242c;font-weight:bold">%s</td></tr>' % (e(k), e(v)) for k, v in rows if v not in (None, ''))
+    btn = ('<p style="margin:22px 0 6px;text-align:center"><a href="%s" style="background:#B48A45;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 28px;border-radius:8px;display:inline-block">%s</a></p>' % (e(button[1]), e(button[0]))) if button else ''
+    nt = ''.join('<p style="margin:6px 0;color:#4a5a63;font-size:13px">%s</p>' % e(n) for n in notes if n)
+    return ('<!DOCTYPE html><html lang="%s" dir="%s"><body style="margin:0;background:#F8F4EC;font-family:Tahoma,Arial,sans-serif;font-size:15px;line-height:1.7;color:#17242c">'
+            '<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#F8F4EC"><tr><td align="center" style="padding:20px 10px">'
+            '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;background:#ffffff;border:1px solid #e4ddd0;border-top:5px solid #B48A45;text-align:%s" dir="%s">'
+            '<tr><td style="background:#0F3D52;color:#ffffff;padding:20px 26px"><div style="font-size:13px;letter-spacing:3px;color:#e9d9b8">ROYAL INN · TARTUS</div><div style="font-size:23px;font-weight:bold;margin-top:4px">%s</div></td></tr>'
+            '<tr><td style="padding:24px 26px 8px"><p style="margin:0 0 8px;font-weight:bold;color:#0F3D52">%s</p><p style="margin:0 0 14px">%s</p>'
+            '<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ddd0;border-bottom:0">%s</table>%s%s</td></tr>'
+            '<tr><td style="padding:16px 26px 22px;color:#64727b;font-size:13px;border-top:1px solid #ece6da"><b style="color:#0F3D52">Royal Inn Hotel · فندق رويال إن</b><br>%s<br><span dir="ltr">%s · %s</span></td></tr>'
+            '</table></td></tr></table></body></html>'
+            % (lang, d, al, d, e(title), e(hello), e(intro), tr, btn, nt, e('Sea Corniche, Tartus, Syria' if lang == 'en' else 'الكورنيش البحري، طرطوس، سوريا'), HOTEL['phone'], HOTEL['site']))
+
+
+def _mail_rows(b, S, en):
+    room = ROOMS[b['room']][0 if en else 1] if b.get('room') in ROOMS else None
+    L = (('Booking number', 'Arrival', 'Departure', 'Nights', 'Guests', 'Room', 'Breakfast', 'Total', 'from', 'until', 'Included', 'Not included', 'tax included')
+         if en else ('رقم الحجز', 'الوصول', 'المغادرة', 'الليالي', 'الضيوف', 'الغرفة', 'الفطور', 'المبلغ الإجمالي', 'من الساعة', 'حتى الساعة', 'مشمول', 'غير مشمول', 'شامل الضريبة'))
+    agency_pays = b.get('agency_id') and b.get('pay_by') == 'agency'
+    return [(L[0], b['ref']), (L[1], '%s (%s %s)' % (_fd(b['check_in']), L[8], S['checkin'])), (L[2], '%s (%s %s)' % (_fd(b['check_out']), L[9], S['checkout'])),
+            (L[3], b['nights']), (L[4], b['guests']), (L[5], room), (L[6], L[10] if b['breakfast'] else L[11]),
+            (L[7], ('$%s (%s)' % (b['total'], L[12])) if (b.get('total') and not agency_pays) else None)]
+
+
+def mail_received(b, S=None):
+    """Sent to the guest the moment a request arrives from the website: received, not yet confirmed."""
+    S = S or DEFAULTS; en = b.get('lang') == 'en'
+    if en:
+        sub, title, hello = 'We received your booking request %s - Royal Inn Tartus' % b['ref'], 'Booking request received', 'Dear %s,' % b['name']
+        intro = 'Thank you for choosing Royal Inn Tartus. We have received your request and the hotel will contact you shortly to confirm it. Your booking is not confirmed yet.'
+        btn = ('Check your booking', 'https://royalinntartus.com/en/contact'); note = 'To check your booking you need the booking number and the last four digits of your phone number.'
+    else:
+        sub, title, hello = 'استلمنا طلب حجزكم %s - فندق رويال إن طرطوس' % b['ref'], 'تم استلام طلب الحجز', 'السيد/ة %s المحترم/ة،' % b['name']
+        intro = 'شكراً لاختياركم فندق رويال إن طرطوس. استلمنا طلبكم وسيتواصل معكم الفندق قريباً لتأكيده. الحجز لم يُؤكَّد بعد.'
+        btn = ('تحقّقوا من حجزكم', 'https://royalinntartus.com/ar/contact'); note = 'للتحقق من الحجز تحتاجون رقم الحجز وآخر أربعة أرقام من هاتفكم.'
+    rows = _mail_rows(b, S, en)
+    text = '\n'.join([hello, '', intro, ''] + ['%s: %s' % (k, v) for k, v in rows if v not in (None, '')] + ['', btn[1], '', 'Royal Inn Hotel · ' + HOTEL['phone']])
+    return send_mail(b.get('email'), sub, text, mail_html('en' if en else 'ar', title, hello, intro, rows, btn, (note,)))
+
+
+def mail_confirmation(b, S=None):
+    """Sent to the guest when the hotel confirms the booking (or records one at the desk): the details and the confirmation letter."""
+    S = S or DEFAULTS; en = b.get('lang') == 'en'
+    link = 'https://royalinntartus.com/api/confirmation/%s/%s' % (b['ref'], letter_key(b['ref']))
+    if en:
+        sub, title, hello = 'Booking confirmed %s - Royal Inn Tartus' % b['ref'], 'Booking confirmed', 'Dear %s,' % b['name']
+        intro = 'We are pleased to confirm your booking at Royal Inn Tartus and look forward to welcoming you.'
+        btn = ('Open your confirmation letter', link); notes = ('Payment is made at the hotel in cash, or by transfer to a Syrian bank in US dollars.', 'Cancellation is free up to 48 hours before arrival.', late_text(S, 'en'))
+    else:
+        sub, title, hello = 'تأكيد الحجز %s - فندق رويال إن طرطوس' % b['ref'], 'تم تأكيد الحجز', 'السيد/ة %s المحترم/ة،' % b['name']
+        intro = 'يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس، ونتطلع إلى استقبالكم.'
+        btn = ('افتحوا رسالة التأكيد', link); notes = ('الدفع في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.', late_text(S, 'ar'))
+    rows = _mail_rows(b, S, en)
+    text = '\n'.join([hello, '', intro, ''] + ['%s: %s' % (k, v) for k, v in rows if v not in (None, '')] + ['', btn[0] + ': ' + link, ''] + [n for n in notes if n] + ['', 'Royal Inn Hotel · ' + HOTEL['phone']])
+    return send_mail(b.get('email'), sub, text, mail_html('en' if en else 'ar', title, hello, intro, rows, btn, notes))
 
 
 def notify_telegram(b):
@@ -395,6 +455,10 @@ def notify_telegram(b):
 def notify(b):
     notify_email(b)
     notify_telegram(b)
+    if b.get('email'):
+        with db() as con:
+            S = settings(con)
+        mail_received(b, S)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -480,7 +544,7 @@ def reminder_loop():
                     lines += ['• %s%s · %s' % (b['name'], (' · غرفة ' + b['room_no']) if b['room_no'] else '', b['phone']) for b in soon]
                     lines += ['', 'https://royalinntartus.com/panel/']
                     send_staff('\n'.join(lines), 'Check-outs today - Royal Inn')
-                if os.environ.get('SMTP_HOST'):
+                if mail_on():
                     for b in due:
                         if b.get('email'):
                             mail_reminder(b, S)
@@ -518,17 +582,14 @@ def late_text(S, lang):
 
 
 def mail_reminder(b, S):
-    try:
-        en = b.get('lang') == 'en'
-        m = EmailMessage()
-        m['Subject'] = ('Check-out today at %s - Royal Inn Tartus' if en else 'موعد المغادرة اليوم الساعة %s - فندق رويال إن طرطوس') % S['checkout']
-        m['From'] = os.environ.get('SMTP_USER') or os.environ.get('NOTIFY_TO', ''); m['To'] = b['email']
-        lt = late_text(S, 'en' if en else 'ar')
-        body = (['Dear %s,' % b['name'], '', 'A kind reminder that check-out is today at %s.' % S['checkout'], 'If you would like to stay longer, please contact reception: %s' % HOTEL['phone'], lt or '', '', 'Royal Inn Hotel']
-                if en else ['السيد/ة %s المحترم/ة،' % b['name'], '', 'نذكّركم بأن موعد المغادرة اليوم الساعة %s.' % S['checkout'], 'إذا رغبتم بتمديد الإقامة يُرجى التواصل مع الاستقبال: %s' % HOTEL['phone'], lt or '', '', 'فندق رويال إن'])
-        m.set_content('\n'.join(body)); smtp_send(m)
-    except Exception as e:
-        print('reminder mail failed:', type(e).__name__, flush=True)
+    en = b.get('lang') == 'en'; lt = late_text(S, 'en' if en else 'ar')
+    if en:
+        sub, title, hello = 'Check-out today at %s - Royal Inn Tartus' % S['checkout'], 'Check-out reminder', 'Dear %s,' % b['name']
+        intro = 'A kind reminder that check-out is today at %s. If you would like to stay longer, please contact reception: %s' % (S['checkout'], HOTEL['phone'])
+    else:
+        sub, title, hello = 'موعد المغادرة اليوم الساعة %s - فندق رويال إن طرطوس' % S['checkout'], 'تذكير بموعد المغادرة', 'السيد/ة %s المحترم/ة،' % b['name']
+        intro = 'نذكّركم بأن موعد المغادرة اليوم الساعة %s. إذا رغبتم بتمديد الإقامة يُرجى التواصل مع الاستقبال: %s' % (S['checkout'], HOTEL['phone'])
+    return send_mail(b.get('email'), sub, '\n'.join([hello, '', intro, lt or '', '', 'Royal Inn Hotel']), mail_html('en' if en else 'ar', title, hello, intro, [], None, (lt,)))
 
 
 SOURCES = {'web': 'الموقع', 'desk': 'الاستقبال', 'phone': 'الهاتف', 'agency': 'وكالة', 'referral': 'عن طريق شخص'}
@@ -1065,7 +1126,7 @@ class H(BaseHTTPRequestHandler):
                         **(lambda t: {'rules': t[0], 'due_soon': t[1], 'late': t[2], 'no_show': t[3], 'clock': dt.datetime.now().strftime('%H:%M')})(desk_state(con)),
                         'units_free': units_view(con, ts, free_only=True)})
                 if p == '/api/admin/settings':
-                    return self.send(200, {'ok': True, 'settings': settings(con), 'clock': dt.datetime.now().strftime('%H:%M')})
+                    return self.send(200, {'ok': True, 'settings': settings(con), 'clock': dt.datetime.now().strftime('%H:%M'), 'mail': mail_on()})
                 if p == '/api/admin/units':
                     d0 = parse_day(q.get('date')) or dt.date.today()
                     return self.send(200, {'ok': True, 'date': d0.isoformat(), 'units': units_view(con, d0.isoformat()),
@@ -1226,7 +1287,8 @@ class H(BaseHTTPRequestHandler):
                     total = int(d['total']) if d.get('total') not in (None, '') else None
                 except (TypeError, ValueError):
                     return self.send(400, {'ok': False, 'error': 'fields'})
-                if not f or not t or t <= f or (t - f).days > 120 or len(name) < 2 or (room and room not in ROOMS):
+                email = clean(d.get('email'), 120) or None
+                if not f or not t or t <= f or (t - f).days > 120 or len(name) < 2 or (room and room not in ROOMS) or (email and not EMAIL_RE.match(email)):
                     return self.send(400, {'ok': False, 'error': 'fields'})
                 with LOCK, db() as con:
                     ref = new_ref()
@@ -1248,9 +1310,13 @@ class H(BaseHTTPRequestHandler):
                     con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source,staff_note,updated,agency_id,pay_by,referrer,net) '
                                 'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                                 (ref, now(), 'en' if d.get('lang') == 'en' else 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, room,
-                                 1 if d.get('breakfast') else 0, name, phone or '-', None, clean(d.get('message'), 600) or None, total, src,
+                                 1 if d.get('breakfast') else 0, name, phone or '-', email, clean(d.get('message'), 600) or None, total, src,
                                  clean(d.get('note'), 400) or None, now(), aid, pay_by, clean(d.get('referrer'), 80) or None, net_of(con, total, aid)))
-                return self.send(200, {'ok': True, 'ref': ref})
+                    r = con.execute('SELECT * FROM bookings WHERE ref=?', (ref,)).fetchone(); S = settings(con)
+                mailed = bool(email and mail_on())
+                if mailed:
+                    threading.Thread(target=mail_confirmation, args=(dict(r), S), daemon=True).start()
+                return self.send(200, {'ok': True, 'ref': ref, 'mailed': mailed})
             if p == '/api/admin/prices':
                 with db() as con:
                     for k in ROOMS:
@@ -1296,6 +1362,26 @@ class H(BaseHTTPRequestHandler):
                     con.execute('DELETE FROM agencies WHERE id=?', (int(m.group(1)),))
                     load_agencies(con)
                 return self.send(200, {'ok': True})
+            m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/mail', p)
+            if m:
+                with db() as con:
+                    r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone(); S = settings(con)
+                if not r:
+                    return self.send(404, {'ok': False})
+                if not mail_on():
+                    return self.send(200, {'ok': False, 'error': 'mail_off'})
+                if not r['email']:
+                    return self.send(200, {'ok': False, 'error': 'no_email'})
+                sent = mail_confirmation(dict(r), S) if r['status'] == 'confirmed' else mail_received(dict(r), S)
+                return self.send(200, {'ok': bool(sent), 'error': None if sent else 'send_failed'})
+            if p == '/api/admin/mail-test':
+                to = clean(d.get('to'), 120)
+                if not EMAIL_RE.match(to or ''):
+                    return self.send(400, {'ok': False, 'error': 'to'})
+                if not mail_on():
+                    return self.send(200, {'ok': False, 'error': 'mail_off'})
+                sent = send_mail(to, 'Royal Inn Tartus - test', 'This is a test message from the Royal Inn booking system.\nهذه رسالة تجريبية من نظام حجوزات فندق رويال إن.')
+                return self.send(200, {'ok': bool(sent), 'error': None if sent else 'send_failed'})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/delete', p)
             if m:
                 # only a cancelled booking can be removed for good (test entries, duplicates)
@@ -1576,9 +1662,11 @@ class H(BaseHTTPRequestHandler):
                     con.execute('UPDATE bookings SET status=?, staff_note=?, room_no=?, paid=?, arrived=?, departed=?, agency_id=?, pay_by=?, source=?, referrer=?, net=?, updated=? WHERE ref=?',
                                 (st or cur['status'], clean(d.get('note', cur['staff_note']), 400) or None, room_no, paid, arrived, departed, aid, pay_by, src, referrer, net_of(con, cur['total'], aid), now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
-                if st == 'confirmed' and cur['status'] != 'confirmed' and r['email']:
-                    threading.Thread(target=mail_confirmation, args=(dict(r),), daemon=True).start()
-                return self.send(200, {'ok': True, 'item': row(r), 'mailed': bool(st == 'confirmed' and cur['status'] != 'confirmed' and r['email'] and os.environ.get('SMTP_HOST'))})
+                    S = settings(con)
+                mailed = bool(st == 'confirmed' and cur['status'] != 'confirmed' and r['email'] and mail_on())
+                if mailed:
+                    threading.Thread(target=mail_confirmation, args=(dict(r), S), daemon=True).start()
+                return self.send(200, {'ok': True, 'item': row(r), 'mailed': mailed})
             if p == '/api/admin/closures':
                 f, t = parse_day(d.get('from')), parse_day(d.get('to') or d.get('from'))
                 room = d.get('room') or None
