@@ -371,7 +371,7 @@
         var data = { name: F.name.value, phone: F.phone.value, email: F.email.value, 'in': F['in'].value, out: F.out.value, guests: F.guests.value, total: F.total.value, room: rs.value, breakfast: cb.checked };
         data.preview = true;
         api('bookings/' + b.ref + '/edit', data).then(function (j) {
-          if (gone(j)) return; if (!j.ok) { toast('تحقّق من الاسم والتواريخ والبريد'); return; }
+          if (gone(j)) return; if (!j.ok) { toast(j.error === 'guests' ? 'عدد الضيوف أكبر من المسموح لهذه الغرفة (الحد الأقصى ' + j.max + ')' : 'تحقّق من الاسم والتواريخ والبريد'); return; }
           var q = 'حفظ التعديل؟' + (j.total !== j.old_total ? '\nالمبلغ: ' + (j.old_total == null ? 'غير محدد' : '$' + j.old_total) + ' ← ' + (j.total == null ? 'يُحدَّد من الفندق' : '$' + j.total) : '') + (j.available ? '' : '\nتنبيه: الغرف من هذا النوع مكتملة أو التواريخ مغلقة.');
           if (!confirm(q)) return;
           data.preview = false; data.force = !j.available;
@@ -534,7 +534,7 @@
     api('bookings/new', { name: f.name.value, phone: f.phone.value, email: f.email.value, 'in': f['in'].value, out: f.out.value, room: f.room.value,
       guests: f.guests.value, total: f.total.value, note: f.note.value, breakfast: f.breakfast.checked, source: f.source.value,
       agency_id: f.agency_id.value, pay_by: f.pay_by.value, referrer: f.referrer.value, lang: f.lang.value }).then(function (j) {
-      if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref + (j.mailed ? ' · أُرسل التأكيد بالبريد' : '')); go('active'); } else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
+      if (j.ok) { f.reset(); srcFields(); toast('تم حفظ الحجز ' + j.ref + (j.mailed ? ' · أُرسل التأكيد بالبريد' : '')); go('active'); } else if (j.error === 'guests') toast('عدد الضيوف أكبر من المسموح لهذه الغرفة (الحد الأقصى ' + j.max + ')'); else if (!gone(j) && j.status) toast('تحقّق من الاسم والتواريخ');
     });
   });
 

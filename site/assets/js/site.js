@@ -109,6 +109,12 @@
       var bt = e.target.closest && e.target.closest('[data-pick]');
       if (bt) { room.value = bt.getAttribute('data-pick'); update(); }
     });
+    function capGuests() {
+      var op = room.options[room.selectedIndex], max = op && op.getAttribute('data-max') ? +op.getAttribute('data-max') : guests.options.length;
+      for (var i = 0; i < guests.options.length; i++) { guests.options[i].disabled = +guests.options[i].value > max; }
+      if (+guests.value > max) { guests.value = String(max); }
+    }
+    room.addEventListener('change', capGuests); capGuests();
     function update() {
       if (ci.value) {
         var p = ci.value.split('-'), nx = new Date(+p[0], +p[1] - 1, +p[2] + 1);

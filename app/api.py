@@ -41,6 +41,13 @@ ROOMS = {
 # The Royal Suite is sold only together with its own connecting room, which is charged at the Standard Room rate.
 # The two-bedroom suite is no longer sold (hotel, Nov 2026); its name stays for old bookings.
 CONNECT = 'royal-connect'
+# most guests per room type (hotel, Nov 2026); the Royal Suite counts with its connecting room
+MAX_GUESTS = {'standard': 2, 'triple': 3, 'junior-suite': 2, 'royal-suite': 4}
+MAX_ANY = max(MAX_GUESTS.values())
+
+
+def too_many(room, guests):
+    return guests > (MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY)
 NAMES = dict(ROOMS, **{'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', 'جناح رويال بغرفتَي نوم'),
                        CONNECT: ('Connecting room (Royal Suite)', 'غرفة متصلة بجناح رويال')})
 STATUSES = ('new', 'confirmed', 'cancelled')
@@ -225,6 +232,8 @@ def quote(con, a, b, guests, room=None):
     for k, names in ROOMS.items():
         if room and k != room:
             continue
+        if not room and guests > MAX_GUESTS.get(k, MAX_ANY):
+            continue           # this room type cannot take that many guests
         base = nightly(con, k, guests, nights)
         per, pct = discounted(con, base, nights)
         total = None if any(x is None for x in per) else sum(per)
@@ -267,7 +276,7 @@ def validate_booking(d):
         errs.append('email')
     if room and room not in ROOMS:
         errs.append('room')
-    if not 1 <= guests <= 12:
+    if not 1 <= guests <= 12 or too_many(room if room in ROOMS else None, guests):
         errs.append('guests')
     lang = 'en' if d.get('lang') == 'en' else 'ar'
     return errs, dict(dates=dates, name=name, phone=phone, email=email or None, room=room or None, message=msg or None,
@@ -1150,6 +1159,9 @@ class H(BaseHTTPRequestHandler):
                 guests = 2
             if err or (room and room not in ROOMS):
                 return self.send(400, {'ok': False, 'error': 'dates'})
+            if too_many(room, guests):
+                return self.send(200, {'ok': True, 'nights': (dates[1] - dates[0]).days, 'open': False, 'rooms': [], 'too_many': True,
+                                       'max': MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY, 'breakfast': BREAKFAST})
             with db() as con:
                 rooms = quote(con, dates[0], dates[1], guests, room)
                 any_open = availability(con, dates[0], dates[1], None)
@@ -1246,7 +1258,7 @@ class H(BaseHTTPRequestHandler):
                     return self.send(200, {'ok': True, 'items': [dict(r) for r in rows]})
                 if p == '/api/admin/inventory':
                     inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
-                    return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'count': inv.get(k)} for k, v in ROOMS.items()]})
+                    return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'count': inv.get(k), 'max': MAX_GUESTS.get(k)} for k, v in ROOMS.items()]})
                 if p == '/api/admin/prices':
                     rows = {r['room']: r for r in con.execute('SELECT * FROM prices')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'price': rows[k]['price'] if k in rows else None,
@@ -1390,6 +1402,8 @@ class H(BaseHTTPRequestHandler):
                 except (TypeError, ValueError):
                     return self.send(400, {'ok': False, 'error': 'fields'})
                 email = clean(d.get('email'), 120) or None
+                if too_many(room if room in ROOMS else None, guests):
+                    return self.send(400, {'ok': False, 'error': 'guests', 'max': MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY})
                 if not f or not t or t <= f or (t - f).days > 120 or len(name) < 2 or (room and room not in ROOMS) or (email and not EMAIL_RE.match(email)):
                     return self.send(400, {'ok': False, 'error': 'fields'})
                 with LOCK, db() as con:
@@ -1512,6 +1526,8 @@ class H(BaseHTTPRequestHandler):
                         return self.send(400, {'ok': False, 'error': 'guests'})
                     if len(name) < 2 or t <= f or (t - f).days > 120 or (room and room not in ROOMS) or (email and not EMAIL_RE.match(email)):
                         return self.send(400, {'ok': False, 'error': 'fields'})
+                    if too_many(room if room in ROOMS else None, guests):
+                        return self.send(400, {'ok': False, 'error': 'guests', 'max': MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY})
                     bf = 1 if d.get('breakfast', bool(cur['breakfast'])) else 0
                     stay_changed = (f.isoformat(), t.isoformat(), room, guests, bf) != (cur['check_in'], cur['check_out'], cur['room'], cur['guests'], cur['breakfast'])
                     free = True
