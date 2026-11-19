@@ -551,6 +551,102 @@ def agency_sums(con, aid):
     return bks, pays, {'bookings': len(bks), 'sales': sales, 'due': due, 'paid': paid, 'balance': due - paid, 'commission_owed': commission}
 
 
+def xlsx(sheets):
+    """A real Excel workbook, written with the standard library only. sheets = [(name, [(header, width, kind)], rows)].
+    kind: 's' text, 'n' number, 'm' money, 'd' date (YYYY-MM-DD), 't' date and time. Right-to-left, frozen header, filter."""
+    import zipfile
+    from xml.sax.saxutils import escape as x
+
+    def col(i):
+        r = ''
+        i += 1
+        while i:
+            i, m = divmod(i - 1, 26); r = chr(65 + m) + r
+        return r
+
+    def cell(ref, v, kind, head=False):
+        if head:
+            return '<c r="%s" s="1" t="inlineStr"><is><t>%s</t></is></c>' % (ref, x(v))
+        if v is None or v == '':
+            return ''
+        try:
+            if kind in ('n', 'm'):
+                return '<c r="%s" s="%d"><v>%s</v></c>' % (ref, 3 if kind == 'm' else 0, float(v) if isinstance(v, float) else int(v))
+            if kind == 'd':
+                return '<c r="%s" s="2"><v>%d</v></c>' % (ref, (dt.date.fromisoformat(str(v)[:10]) - dt.date(1899, 12, 30)).days)
+            if kind == 't':
+                t = dt.datetime.fromisoformat(str(v)).astimezone().replace(tzinfo=None)
+                return '<c r="%s" s="4"><v>%.5f</v></c>' % (ref, (t - dt.datetime(1899, 12, 30)).total_seconds() / 86400.0)
+        except (TypeError, ValueError):
+            pass
+        return '<c r="%s" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>' % (ref, x(re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(v))))
+
+    styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+              '<numFmts count="3"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/><numFmt numFmtId="165" formatCode="&quot;$&quot;#,##0"/><numFmt numFmtId="166" formatCode="dd/mm/yyyy hh:mm"/></numFmts>'
+              '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>'
+              '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F3D52"/></patternFill></fill></fills>'
+              '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+              '<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+              '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+              '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+              '<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>'
+              '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                   '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                   + ''.join('<Override PartName="/xl/worksheets/sheet%d.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' % (i + 1) for i in range(len(sheets))) + '</Types>')
+        z.writestr('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        z.writestr('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                   'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+                   + ''.join('<sheet name="%s" sheetId="%d" r:id="rId%d"/>' % (x(n), i + 1, i + 1) for i, (n, _c, _r) in enumerate(sheets)) + '</sheets></workbook>')
+        z.writestr('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   + ''.join('<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet%d.xml"/>' % (i + 1, i + 1) for i in range(len(sheets)))
+                   + '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' % (len(sheets) + 1))
+        z.writestr('xl/styles.xml', styles)
+        for i, (_n, cols, rows) in enumerate(sheets):
+            last = '%s%d' % (col(len(cols) - 1), len(rows) + 1)
+            body = '<row r="1" ht="30" customHeight="1">%s</row>' % ''.join(cell('%s1' % col(c), h, 's', True) for c, (h, _w, _k) in enumerate(cols))
+            for ri, r in enumerate(rows):
+                body += '<row r="%d">%s</row>' % (ri + 2, ''.join(cell('%s%d' % (col(c), ri + 2), r[c], cols[c][2]) for c in range(len(cols))))
+            z.writestr('xl/worksheets/sheet%d.xml' % (i + 1), '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                       '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"%s><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' % (' tabSelected="1"' if i == 0 else '')
+                       + '<cols>%s</cols><sheetData>%s</sheetData><autoFilter ref="A1:%s"/></worksheet>' % (''.join('<col min="%d" max="%d" width="%d" customWidth="1"/>' % (c + 1, c + 1, w) for c, (_h, w, _k) in enumerate(cols)), body, last))
+    return buf.getvalue()
+
+
+def export_book(con):
+    load_agencies(con)
+    stt = {'new': 'جديد', 'confirmed': 'مؤكَّد', 'cancelled': 'ملغى'}
+    cols = [('رقم الحجز', 13, 's'), ('الحالة', 10, 's'), ('المصدر', 14, 's'), ('الوكالة', 20, 's'), ('من يدفع', 10, 's'), ('اسم الضيف', 24, 's'), ('الهاتف', 18, 's'), ('البريد الإلكتروني', 28, 's'),
+            ('الوصول', 12, 'd'), ('المغادرة', 12, 'd'), ('الليالي', 8, 'n'), ('الضيوف', 8, 'n'), ('نوع الغرفة', 22, 's'), ('رقم الغرفة', 10, 's'), ('الفطور', 8, 's'),
+            ('المبلغ الإجمالي', 14, 'm'), ('رسم المغادرة المتأخرة', 14, 'm'), ('المدفوع', 11, 'm'), ('المتبقي', 11, 'm'), ('الصافي من الوكالة', 14, 'm'),
+            ('سُجِّل الوصول', 17, 't'), ('سُجِّلت المغادرة', 17, 't'), ('عدم حضور', 9, 's'), ('عن طريق (شخص)', 18, 's'), ('رسالة الضيف', 36, 's'), ('ملاحظة داخلية', 36, 's'), ('تاريخ الطلب', 17, 't')]
+    rows = []
+    for r in con.execute('SELECT * FROM bookings ORDER BY check_in DESC, created DESC'):
+        tot, paid = r['total'], r['paid']
+        rows.append([r['ref'], stt.get(r['status'], r['status']), SOURCES.get(r['source'] or 'web', 'الموقع'), AGENCIES.get(r['agency_id'], '') if r['agency_id'] else '',
+                     ('الوكالة' if r['pay_by'] == 'agency' else 'الضيف') if r['agency_id'] else '', r['name'], r['phone'], r['email'], r['check_in'], r['check_out'], r['nights'], r['guests'],
+                     ROOMS[r['room']][1] if r['room'] in ROOMS else 'غير محدد', r['room_no'], 'نعم' if r['breakfast'] else 'لا', tot, r['late_fee'], paid,
+                     None if tot is None or r['status'] == 'cancelled' else max(0, tot - (paid or 0)), r['net'] if r['pay_by'] == 'agency' else None,
+                     r['arrived'], r['departed'], 'نعم' if r['no_show'] else '', r['referrer'], r['message'], r['staff_note'], r['created']])
+    acols = [('الوكالة', 26, 's'), ('العمولة %', 10, 'n'), ('المسؤول', 20, 's'), ('الهاتف', 18, 's'), ('حجوزات مؤكَّدة', 12, 'n'), ('إجمالي المبيعات', 14, 'm'),
+             ('المستحق على الوكالة', 16, 'm'), ('المدفوع', 12, 'm'), ('الرصيد المتبقي', 14, 'm'), ('عمولة مستحقة للوكالة', 16, 'm')]
+    arows = []
+    for a in con.execute('SELECT * FROM agencies ORDER BY name').fetchall():
+        _b, _p, sm = agency_sums(con, a['id'])
+        arows.append([a['name'], a['commission'], a['contact'], a['phone'], sm['bookings'], sm['sales'], sm['due'], sm['paid'], sm['balance'], sm['commission_owed']])
+    pcols = [('التاريخ', 12, 'd'), ('الوكالة', 26, 's'), ('المبلغ', 12, 'm'), ('ملاحظة', 36, 's')]
+    prows = [[x['date'], AGENCIES.get(x['agency_id'], ''), x['amount'], x['note']] for x in con.execute('SELECT * FROM agency_payments ORDER BY date DESC, id DESC')]
+    ucols = [('رقم الغرفة', 11, 's'), ('نوع الغرفة', 24, 's'), ('الطابق', 9, 's'), ('الحالة اليوم', 22, 's'), ('الضيف', 24, 's'), ('حتى', 12, 'd')]
+    ust = {'free': 'جاهزة', 'occupied': 'مشغولة', 'arriving': 'محجوزة، الضيف لم يصل', 'leaving': 'مغادرة اليوم', 'dirty': 'تحتاج تنظيف', 'out': 'خارج الخدمة'}
+    urows = [[u['no'], u['room_name'], u['floor'], ust[u['state']], u['guest'], u['until']] for u in units_view(con, dt.date.today().isoformat())]
+    return xlsx([('الحجوزات', cols, rows), ('الوكالات', acols, arows), ('دفعات الوكالات', pcols, prows), ('الغرف', ucols, urows)])
+
+
 def units_view(con, ds, free_only=False):
     """The room rack for one day: every numbered room with who is in it, who arrives and who leaves."""
     out = []
@@ -589,11 +685,11 @@ def row(r):
 HOTEL = {'phone': '+963 998 730 730', 'wa': '963998730730', 'email': 'res@royalinn.org', 'site': 'royalinntartus.com'}
 # Labels are printed in both languages: the guest's language first, the other one small beside it.
 LBL = {'ref': ('Confirmation no.', 'رقم التأكيد'), 'status': ('Status', 'الحالة'), 'issued': ('Date of issue', 'تاريخ الإصدار'), 'to': ('Guest name', 'اسم الضيف'),
-       'phone': ('Phone', 'الهاتف'), 'company': ('Company / agency', 'الشركة / الوكالة'), 'via': ('Booked through', 'الحجز عن طريق'),
+       'phone': ('Phone', 'الهاتف'), 'email': ('E-mail', 'البريد الإلكتروني'), 'company': ('Company / agency', 'الشركة / الوكالة'), 'via': ('Booked through', 'الحجز عن طريق'),
        'cin': ('Arrival', 'الوصول'), 'cout': ('Departure', 'المغادرة'), 'nights': ('Nights', 'الليالي'), 'guests': ('Guests', 'الضيوف'),
        'room': ('Room type', 'نوع الغرفة'), 'room_no': ('Room number', 'رقم الغرفة'), 'bf': ('Breakfast', 'الفطور'), 'rate': ('Average rate per night', 'متوسط سعر الليلة'),
        'late': ('Late check-out fee', 'رسم المغادرة المتأخرة'), 'total': ('Total amount', 'المبلغ الإجمالي'), 'paid': ('Paid', 'المدفوع'), 'due': ('Balance due at the hotel', 'المتبقي للدفع في الفندق'), 'pay': ('Payment', 'الدفع')}
-SEC = {'res': ('Reservation', 'بيانات الحجز'), 'stay': ('Stay', 'الإقامة'), 'rate': ('Rate and payment', 'السعر والدفع'), 'pol': ('Hotel policies', 'سياسات الفندق')}
+SEC = {'res': ('Guest details', 'بيانات الضيف'), 'stay': ('Stay', 'الإقامة'), 'rate': ('Rate and payment', 'السعر والدفع'), 'pol': ('Hotel policies', 'سياسات الفندق')}
 VIA = {'web': ('Hotel website', 'موقع الفندق'), 'desk': ('Hotel reception', 'استقبال الفندق'), 'phone': ('Telephone', 'الهاتف'), 'agency': ('Travel agency', 'وكالة سفر'), 'referral': ('Referral', 'توصية')}
 LETTER = {
     'ar': dict(dir='rtl', title='تأكيد حجز', hello='السيد/ة {name} المحترم/ة،', intro='يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس، ونتطلع إلى استقبالكم.',
@@ -625,7 +721,7 @@ def _fd(ds):
 def doc_head(lang, direction, title):
     return ('<!DOCTYPE html>\n<html lang="%s" dir="%s">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             '<meta name="robots" content="noindex, nofollow">\n<title>%s | Royal Inn Tartus</title>\n<link rel="icon" href="/favicon.ico">\n'
-            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=2">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
+            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=3">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
             % (lang, direction, _esc(title)))
 
 
@@ -657,44 +753,60 @@ def letter_html(r, S=None):
         return head + '<main class="sheet">' + doc_band(e(msg)) + '<div class="pad">%s</div>' % sub + doc_foot(L['addr']) + '</main>\n</body>\n</html>\n'
     keys = r.keys()
     g = lambda k: r[k] if k in keys else None
+    O = LETTER['en' if lang == 'ar' else 'ar']
     lab = lambda k: '%s <i dir="auto">%s</i>' % (e(LBL[k][i]), e(LBL[k][j]))
     sec = lambda k, rows: ('<section class="sec"><h2>%s <i>%s</i></h2><table class="lt">%s</table></section>'
                            % (e(SEC[k][i]), e(SEC[k][j]), ''.join('<tr><th>%s</th><td>%s</td></tr>' % (lab(a), v) for a, v in rows)))
     agency = AGENCIES.get(g('agency_id')) if g('agency_id') else None
     room = ROOMS[r['room']][0 if lang == 'en' else 1] if r['room'] in ROOMS else L['any']
-    res = [('ref', '<b dir="ltr">%s</b>' % e(r['ref'])), ('status', '<span class="ok">%s</span>' % e(L['confirmed'])),
-           ('to', e(r['name']))]
+    dn = (['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] if lang == 'en'
+          else ['الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'])
+    wd = lambda ds: dn[dt.date.fromisoformat(ds).weekday()]
+    tile = lambda k, big, small, cls='': '<div class="tile %s"><span class="tl">%s</span><b dir="auto">%s</b><span class="ts">%s</span></div>' % (cls, lab(k), big, small)
+    strip = ('<div class="strip">' + tile('cin', _fd(r['check_in']), '%s · %s' % (e(wd(r['check_in'])), e(L['from14'])))
+             + tile('cout', _fd(r['check_out']), '%s · %s' % (e(wd(r['check_out'])), e(L['until12'])))
+             + tile('nights', r['nights'], '%s: %s' % (e(LBL['guests'][i]), r['guests']), 'num') + tile('room', e(room), ('%s: %s' % (e(LBL['room_no'][i]), e(g('room_no')))) if g('room_no') else e(L['yes'] if r['breakfast'] else L['no']), 'wide') + '</div>')
+    res = [('to', '<b>%s</b>' % e(r['name']))]
     if r['phone'] and r['phone'] != '-':
         res.append(('phone', '<span dir="ltr">%s</span>' % e(r['phone'])))
+    if g('email'):
+        res.append(('email', '<span dir="ltr">%s</span>' % e(g('email'))))
     if agency:
         res.append(('company', e(agency)))
     src = g('source') or 'web'
     res.append(('via', e(VIA.get(src, VIA['web'])[i]) + ((' · ' + e(g('referrer'))) if (src == 'referral' and g('referrer')) else '')))
-    res.append(('issued', '<span dir="ltr">%s</span>' % _fd(dt.date.today().isoformat())))
-    stay = [('cin', '<b dir="ltr">%s</b> <small>%s</small>' % (_fd(r['check_in']), e(L['from14']))),
-            ('cout', '<b dir="ltr">%s</b> <small>%s</small>' % (_fd(r['check_out']), e(L['until12']))),
-            ('nights', r['nights']), ('guests', r['guests']), ('room', e(room))]
-    if g('room_no'):
-        stay.append(('room_no', '<span dir="ltr">%s</span>' % e(g('room_no'))))
-    stay.append(('bf', e(L['yes'] if r['breakfast'] else L['no'])))
+    res += [('guests', r['guests']), ('bf', e(L['yes'] if r['breakfast'] else L['no']))]
+    total_box = ''
     if agency and g('pay_by') == 'agency':      # a voucher: the guest pays the agency, so no amounts are printed
         rate = [('pay', e(L['by_agency'].format(a=agency)))]
     elif r['total']:
-        paid = g('paid') or 0
-        rate = [('rate', '$%d' % round((r['total'] - (g('late_fee') or 0)) / max(1, r['nights']))), ('total', '<b class="tot">$%d</b> <small>(%s)</small>' % (r['total'], e(L['tax'])))]
-        if g('late_fee'):
-            rate.insert(1, ('late', '$%d' % g('late_fee')))
+        paid = g('paid') or 0; lf = g('late_fee') or 0
+        rate = [('rate', '$%d' % round((r['total'] - lf) / max(1, r['nights']))), ('nights', '%d' % r['nights'])]
+        if lf:
+            rate.append(('late', '$%d' % lf))
         if paid:
-            rate += [('paid', '$%d' % paid), ('due', '<b>$%d</b>' % max(0, r['total'] - paid))]
+            rate.append(('paid', '$%d' % paid))
         rate.append(('pay', e(L['at_hotel'])))
+        due = max(0, r['total'] - paid)
+        total_box = ('<div class="total"><div><span>%s</span><b>$%d</b><small>%s</small></div>%s</div>'
+                     % (lab('total'), r['total'], e(L['tax']), ('<div class="due"><span>%s</span><b>$%d</b></div>' % (lab('due'), due)) if paid else ''))
     else:
         rate = [('total', e(L['ask'])), ('pay', e(L['at_hotel']))]
-    pol = '<section class="sec"><h2>%s <i>%s</i></h2><ul class="pol">%s</ul></section>' % (e(SEC['pol'][i]), e(SEC['pol'][j]), ''.join('<li>%s</li>' % e(x) for x in L['t']))
-    band = doc_band(e(L['title']) + (' <i>%s</i>' % e(LETTER['en' if lang == 'ar' else 'ar']['title'])), '<p dir="ltr">%s</p>' % e(r['ref']))
-    return (head + '<div class="tools"><button type="button" data-print>%s</button></div><main class="sheet">' % e(L['print']) + band
+    pol = '<section class="sec pols"><h2>%s <i>%s</i></h2><ul class="pol">%s</ul></section>' % (e(SEC['pol'][i]), e(SEC['pol'][j]), ''.join('<li>%s</li>' % e(x) for x in L['t']))
+    lh = ('<header class="lh"><img src="/assets/img/logo-stacked.svg" alt="Royal Inn" width="150" height="109">'
+          '<div class="lh-c"><b>Royal Inn Hotel · فندق رويال إن</b><span>%s</span><span dir="ltr">%s · %s</span><span dir="ltr">%s</span></div></header>'
+          % (e(L['addr']), HOTEL['phone'], HOTEL['email'], HOTEL['site']))
+    hero = ('<div class="hero"><div class="hero-t"><h1>%s</h1><p>%s</p></div><div class="refbox"><span>%s</span><b dir="ltr">%s</b><em class="ok">%s</em></div></div>'
+            % (e(L['title']), e(O['title']), lab('ref'), e(r['ref']), e(L['confirmed'])))
+    signed = ('<div class="signs"><div><p class="bye">%s</p><p class="sign">%s</p><p class="muted" dir="ltr">%s · %s</p></div>'
+              '<div class="issue"><span>%s</span><b dir="ltr">%s</b></div></div><p class="auto">%s</p>'
+              % (e(L['bye']), e(L['sign']), HOTEL['phone'], HOTEL['email'], lab('issued'), _fd(dt.date.today().isoformat()),
+                 e('This confirmation was issued electronically by the hotel reservation system and is valid without a signature.' if lang == 'en'
+                   else 'صدر هذا التأكيد إلكترونياً من نظام حجوزات الفندق، وهو صالح بدون توقيع.')))
+    return (head + '<div class="tools"><button type="button" data-print>%s</button></div><main class="sheet letter">' % e(L['print']) + lh + hero
             + '<div class="pad"><p class="hello">%s</p><p>%s</p>' % (e(L['hello'].format(name=r['name'])), e(L['intro']))
-            + sec('res', res) + '<div class="two">' + sec('stay', stay) + sec('rate', rate) + '</div>' + pol
-            + '<p class="bye">%s</p><p class="sign">%s</p></div>' % (e(L['bye']), e(L['sign'])) + doc_foot(L['addr']) + '</main>\n</body>\n</html>\n')
+            + strip + '<div class="two">' + sec('res', res) + '<div>' + sec('rate', rate) + total_box + '</div></div>' + pol + signed + '</div>'
+            + '<footer class="lf2"><span>%s</span><span dir="ltr">%s</span></footer>' % (e(L['addr']), HOTEL['site']) + '</main>\n</body>\n</html>\n')
 
 
 def pricelist_html(con, agency=None):
@@ -1029,6 +1141,9 @@ class H(BaseHTTPRequestHandler):
                         rows.append({'id': k, 'name': v[1], 'count': inv.get(k), 'cells': cells})
                     unassigned = [[sum(1 for x in bks if not x['room'] and x['status'] == s and x['check_in'] <= d.isoformat() < x['check_out']) for s in ('confirmed', 'new')] for d in dates]
                     return self.send(200, {'ok': True, 'dates': [d.isoformat() for d in dates], 'rows': rows, 'any': unassigned})
+                if p == '/api/admin/export.xlsx':
+                    return self.send(200, raw=export_book(con), ctype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                     extra={'Content-Disposition': 'attachment; filename="royalinn-bookings-%s.xlsx"' % dt.date.today().isoformat()})
                 if p == '/api/admin/export.csv':
                     out = io.StringIO(); w = csv.writer(out)
                     cols = ['ref', 'created', 'status', 'source', 'check_in', 'check_out', 'nights', 'guests', 'room', 'breakfast', 'total', 'paid', 'room_no', 'arrived', 'departed', 'name', 'phone', 'email', 'message', 'staff_note', 'pay_by', 'net', 'referrer']
