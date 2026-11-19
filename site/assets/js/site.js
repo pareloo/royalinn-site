@@ -161,6 +161,8 @@
             box.querySelector('[data-wa-done]').href = waUrl(j.ref);
             more.hidden = true; box.querySelector('.book-grid').hidden = true; sum.hidden = true; avail.hidden = true;
             done.hidden = false; done.focus();
+            // on phones, open WhatsApp with the request already written, so the hotel receives it there too
+            if (window.matchMedia && window.matchMedia('(pointer:coarse)').matches) { setTimeout(function () { window.location.href = waUrl(j.ref); }, 1200); }
           } else if (j.code === 429) { fail(L.errBusy); }
           else if (j.fields) { fail(L.errFields, j.fields); }
           else { fail(L.errNet); }

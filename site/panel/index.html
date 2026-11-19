@@ -7,8 +7,8 @@
 <title>لوحة الحجوزات | رويال إن</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">
-<link rel="stylesheet" href="/panel/panel.css?v=10">
-<script src="/panel/panel.js?v=11" defer></script>
+<link rel="stylesheet" href="/panel/panel.css?v=11">
+<script src="/panel/panel.js?v=12" defer></script>
 </head>
 <body>
 <header class="top">
@@ -115,6 +115,7 @@
           <label>نصف يوم: حتى الساعة<input type="time" name="late_half_until" required></label>
           <label>رسم نصف اليوم (% من سعر الليلة)<input type="number" name="late_half_pct" min="0" max="100" required></label>
           <label>بعد ذلك: ليلة إضافية (% من سعر الليلة)<input type="number" name="late_full_pct" min="0" max="100" required></label>
+          <label class="wide">نص الدفعة المقدّمة (يُرسل للضيف في رسالة «اطلب الدفعة»)<textarea name="deposit_info" rows="3" maxlength="500"></textarea></label>
           <label class="inline wide"><input type="checkbox" name="noshow_on"> كتابة سياسة عدم الحضور في رسالة التأكيد (تُحتسب الليلة الأولى)</label>
           <label class="inline wide"><input type="checkbox" name="early_note"> كتابة «الدخول المبكر حسب التوفر» في رسالة التأكيد</label>
           <button class="gold" type="submit">حفظ</button>
@@ -200,6 +201,7 @@
 
     <div id="view-prices" hidden>
       <div class="page-head"><h1>الأسعار</h1><a class="ghost sm" href="/api/pricelist" target="_blank" rel="noopener">قائمة الأسعار (طباعة / PDF)</a></div>
+      <p class="note-box">جناح رويال يُباع مع غرفته المتصلة فقط. اكتبوا هنا سعر الجناح وحده: النظام يضيف الغرفة المتصلة بسعر الغرفة الستاندرد تلقائياً (السعر المفرد، والمزدوج عند 4 ضيوف).</p>
       <div class="card">
         <h2>السعر الأساسي لليلة ($، شامل الضريبة)</h2>
         <p class="muted">«لشخصين+» اختياري: يُستعمل عندما يكون عدد الضيوف 2 أو أكثر. اتركه فارغاً إذا السعر واحد. اترك الكل فارغاً = «السعر عند الطلب».</p>
@@ -261,6 +263,7 @@
 
     <div id="view-inventory" hidden>
       <div class="page-head"><h1>عدد الغرف</h1></div>
+      <p class="note-box">جناح رويال: اكتبوا عدد الأجنحة (مثلاً 7). الغرف المتصلة بالأجنحة لا تُحسب مع الغرف الستاندرد، لأنها لا تُباع إلا مع الجناح.</p>
       <div class="card">
         <h2>عدد الغرف من كل نوع</h2>
         <p class="muted">اكتب كم غرفة يملك الفندق من كل نوع. بعدها يعرف الموقع متى تمتلئ الغرف ويتوقف عن عرضها، وتظهر الأعداد في الصفحة الرئيسية وفي الإشغال. الحقل الفارغ = غير محدد (الموقع يقبل الطلبات دائماً). إذا أضفت أرقام الغرف من «الغرف» يُحسب العدد تلقائياً ولا حاجة لكتابته هنا.</p>

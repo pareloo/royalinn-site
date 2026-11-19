@@ -36,12 +36,16 @@ ROOMS = {
     'standard': ('Standard Room', 'غرفة ستاندرد'),
     'triple': ('Triple Room', 'غرفة ثلاثية'),
     'junior-suite': ('Junior Suite', 'جناح جونيور'),
-    'royal-suite': ('Royal Suite', 'جناح رويال'),
-    'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', 'جناح رويال بغرفتَي نوم'),
+    'royal-suite': ('Royal Suite with connecting room', 'جناح رويال مع غرفة متصلة'),
 }
+# The Royal Suite is sold only together with its own connecting room, which is charged at the Standard Room rate.
+# The two-bedroom suite is no longer sold (hotel, Nov 2026); its name stays for old bookings.
+CONNECT = 'royal-connect'
+NAMES = dict(ROOMS, **{'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', 'جناح رويال بغرفتَي نوم'),
+                       CONNECT: ('Connecting room (Royal Suite)', 'غرفة متصلة بجناح رويال')})
 STATUSES = ('new', 'confirmed', 'cancelled')
 # rates confirmed by the hotel (Nov 2026), USD per night incl. tax; price2 = two or more guests. None = on request
-DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (None, None), 'royal-suite': (None, None), 'two-bedroom-royal-suite': (None, None)}
+DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (None, None), 'royal-suite': (None, None)}
 BREAKFAST = 10
 MAX_NIGHTS, MAX_AHEAD_DAYS = 60, 550
 os.environ['TZ'] = os.environ.get('HOTEL_TZ', '<+03>-3')
@@ -159,6 +163,14 @@ def availability(con, a, b, room, skip=None):
 
 
 def nightly(con, room, guests, nights):
+    """Price for each night. The Royal Suite adds its connecting room at the Standard rate (single rate, double rate from 4 guests)."""
+    if room == 'royal-suite':
+        a = _nightly(con, room, min(guests, 2), nights); b = _nightly(con, 'standard', 2 if guests >= 4 else 1, nights)
+        return [None if (x is None or y is None) else x + y for x, y in zip(a, b)]
+    return _nightly(con, room, guests, nights)
+
+
+def _nightly(con, room, guests, nights):
     """Price for each night (None when the hotel gives the rate on request). Later rules win over earlier ones."""
     base = con.execute('SELECT price, price2 FROM prices WHERE room=?', (room,)).fetchone()
     rules = con.execute('SELECT * FROM rates WHERE (room=? OR room IS NULL) AND date_from <= ? AND date_to >= ? ORDER BY id',
@@ -304,33 +316,96 @@ def unsign(token):
 
 
 # ---------------------------------------------------------------- notifications
+def act_url(ref):
+    return 'https://royalinntartus.com/api/act/%s/%s' % (ref, letter_key('act:' + ref))
+
+
+def wa_link(phone, text):
+    import urllib.parse
+    dg = re.sub(r'\D', '', phone or '')
+    if dg.startswith('00'):
+        dg = dg[2:]
+    elif dg.startswith('0'):
+        dg = '963' + dg[1:]
+    return 'https://wa.me/%s?text=%s' % (dg, urllib.parse.quote(text)) if len(dg) >= 8 else None
+
+
+def deposit_text(b, S):
+    room = NAMES.get(b.get('room') or '', ('', ''))[1]
+    if b.get('lang') == 'en':
+        return ('Hello %s, thank you for your booking request %s at Royal Inn Tartus (%s to %s%s). To secure the booking please send a deposit by money transfer inside Syria. %s Your booking is confirmed once we receive it.'
+                % (b['name'], b['ref'], b['check_in'], b['check_out'], (', total $%s' % b['total']) if b.get('total') else '', S.get('deposit_info', '')))
+    return ('مرحباً %s، شكراً لطلب الحجز %s في فندق رويال إن طرطوس (من %s إلى %s%s%s). لتثبيت الحجز يُرجى إرسال دفعة مقدّمة. %s يتم تأكيد الحجز فور وصول الدفعة.'
+            % (b['name'], b['ref'], _fd(b['check_in']), _fd(b['check_out']), (' · ' + room) if room else '', ('، المبلغ الإجمالي %s$' % b['total']) if b.get('total') else '', S.get('deposit_info', '')))
+
+
 def notify_email(b):
-    host, to = os.environ.get('SMTP_HOST'), os.environ.get('NOTIFY_TO')
-    if not host or not to:
+    """New request -> the hotel's mailbox, with buttons to ask for the deposit, confirm or refuse without opening the panel."""
+    to = os.environ.get('NOTIFY_TO')
+    if not os.environ.get('SMTP_HOST') or not to:
         return
     try:
+        with db() as con:
+            S = settings(con)
+        room = NAMES.get(b['room'] or '', ('-', 'أي غرفة'))[1]
+        rows = [('رقم الطلب', b['ref']), ('الاسم', b['name']), ('الهاتف', '\u2066%s\u2069' % b['phone']), ('البريد', b.get('email')),
+                ('الوصول', _fd(b['check_in'])), ('المغادرة', '%s (%s ليالٍ)' % (_fd(b['check_out']), b['nights'])), ('الضيوف', b['guests']),
+                ('نوع الغرفة', room), ('الفطور', 'نعم' if b['breakfast'] else 'لا'), ('المبلغ الإجمالي', ('%s$' % b['total']) if b.get('total') else 'يُحدَّد من الفندق'),
+                ('ملاحظة الضيف', b.get('message')), ('لغة الضيف', 'English' if b.get('lang') == 'en' else 'العربية')]
+        act = act_url(b['ref']); dep = wa_link(b['phone'], deposit_text(b, S))
+        btn = lambda href, label, bg: '<a href="%s" style="display:inline-block;background:%s;color:#fff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:8px;margin:4px">%s</a>' % (href, bg, label)
+        buttons = ('<p style="text-align:center;margin:18px 0 4px">' + (btn(dep, '١. اطلب الدفعة (واتساب)', '#1f9d55') if dep else '')
+                   + btn(act, '٢. تأكيد أو رفض الحجز', '#B48A45') + '</p>'
+                   '<p style="text-align:center;color:#64727b;font-size:13px;margin:0">بعد التأكيد أدخلوا الحجز في برنامج الفندق كالعادة.</p>')
+        html = mail_html('ar', 'طلب حجز جديد %s' % b['ref'], 'طلب حجز جديد من الموقع', 'وصل طلب حجز من موقع الفندق. الطلب لا يحجز الغرفة قبل التأكيد.', rows, None, ()).replace('</table><p', '</table>' + buttons + '<p', 1)
+        if buttons not in html:
+            html = html.replace('</td></tr><tr><td style="padding:16px 26px 22px', buttons + '</td></tr><tr><td style="padding:16px 26px 22px', 1)
+        text = '\n'.join(['%s: %s' % (k, v) for k, v in rows if v not in (None, '')] + ['', 'اطلب الدفعة (واتساب): ' + (dep or '-'), 'تأكيد أو رفض: ' + act])
         m = EmailMessage()
-        m['Subject'] = f"طلب حجز جديد {b['ref']} - Royal Inn"
-        m['From'] = os.environ.get('SMTP_USER', to)
-        m['To'] = to
-        room = ROOMS.get(b['room'] or '', ('-', 'أي غرفة'))[1]
-        m.set_content('\n'.join([
-            f"رقم الطلب: {b['ref']}", f"الاسم: {b['name']}", f"الهاتف: {b['phone']}", f"البريد: {b['email'] or '-'}",
-            f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {b['guests']}",
-            f"نوع الغرفة: {room}", f"الفطور: {'نعم' if b['breakfast'] else 'لا'}", f"ملاحظة: {b['message'] or '-'}",
-            '', 'لوحة الحجوزات: https://royalinntartus.com/panel/']))
-        port = int(os.environ.get('SMTP_PORT', '465'))
-        if port == 465:
-            s = smtplib.SMTP_SSL(host, port, timeout=15)
-        else:
-            s = smtplib.SMTP(host, port, timeout=15)
-            s.starttls()
-        if os.environ.get('SMTP_USER'):
-            s.login(os.environ['SMTP_USER'], os.environ.get('SMTP_PASS', ''))
-        s.send_message(m)
-        s.quit()
+        m['Subject'] = 'طلب حجز جديد %s · %s · %s' % (b['ref'], b['name'], _fd(b['check_in']))
+        from email.utils import formataddr
+        m['From'] = formataddr(('Royal Inn - الحجوزات', os.environ.get('MAIL_FROM') or os.environ.get('SMTP_USER') or to)); m['To'] = to
+        m.set_content(text); m.add_alternative(html, subtype='html')
+        smtp_send(m)
     except Exception as e:  # a failed e-mail never loses the request
         print('notify failed:', type(e).__name__, flush=True)
+
+
+def act_page(r, done=None, S=None):
+    """The page behind the e-mail button: the request, and links to confirm or refuse it."""
+    e = _esc
+    head = doc_head('ar', 'rtl', 'طلب الحجز')
+    if r is None:
+        return head + '<main class="sheet">' + doc_band('الرابط غير صحيح') + '</main></body></html>'
+    room = NAMES.get(r['room'] or '', ('-', 'أي غرفة'))[1]
+    rows = [('رقم الطلب', '<b dir="ltr">%s</b>' % e(r['ref'])), ('الاسم', e(r['name'])), ('الهاتف', '<span dir="ltr">%s</span>' % e(r['phone'])),
+            ('التواريخ', '<span dir="ltr">%s – %s</span> (%s ليالٍ)' % (_fd(r['check_in']), _fd(r['check_out']), r['nights'])), ('الضيوف', r['guests']), ('الغرفة', e(room)),
+            ('المبلغ', ('%s$' % r['total']) if r['total'] else 'يُحدَّد من الفندق')]
+    st = {'new': 'جديد، ينتظر الرد', 'confirmed': 'مؤكَّد', 'cancelled': 'ملغى'}[r['status']]
+    tbl = '<section class="sec"><h2>تفاصيل الطلب <i>%s</i></h2><table class="lt">%s</table></section>' % (e(st), ''.join('<tr><th>%s</th><td>%s</td></tr>' % (k, v) for k, v in rows))
+    base = '/api/act/%s/%s' % (r['ref'], letter_key('act:' + r['ref']))
+    big = lambda href, label, cls: '<a class="bigbtn %s" href="%s"%s>%s</a>' % (cls, e(href), ' target="_blank" rel="noopener"' if href.startswith('https://wa.me') else '', e(label))
+    if r['status'] == 'new':
+        dep = wa_link(r['phone'], deposit_text(dict(r), S or DEFAULTS))
+        acts = ((big(dep, 'اطلب الدفعة من الضيف (واتساب)', 'wa') if dep else '') + big(base + '?do=confirm', 'تأكيد الحجز (بعد استلام الدفعة)', 'ok')
+                + big(base + '?do=cancel', 'رفض / إلغاء الطلب', 'no'))
+        msg = ''
+    elif r['status'] == 'confirmed':
+        letter = 'https://royalinntartus.com/api/confirmation/%s/%s' % (r['ref'], letter_key(r['ref']))
+        t = ('Hello %s, your booking %s at Royal Inn Tartus is confirmed. Your confirmation letter: %s' % (r['name'], r['ref'], letter)) if r['lang'] == 'en' else \
+            ('مرحباً %s، تم تأكيد حجزكم %s في فندق رويال إن طرطوس. رسالة التأكيد: %s' % (r['name'], r['ref'], letter))
+        wa = wa_link(r['phone'], t)
+        acts = (big(wa, 'أرسل رسالة التأكيد للضيف (واتساب)', 'wa') if wa else '') + big(letter, 'رسالة التأكيد (طباعة / PDF)', 'line')
+        msg = '<p class="ok-msg">%s لا تنسوا إدخال الحجز في برنامج الفندق.</p>' % ('تم تأكيد الحجز.' if done == 'confirm' else 'هذا الحجز مؤكَّد.')
+    else:
+        t = ('Hello %s, we are sorry, we cannot confirm booking %s at Royal Inn Tartus for these dates.' % (r['name'], r['ref'])) if r['lang'] == 'en' else \
+            ('مرحباً %s، نعتذر، لا نستطيع تأكيد الحجز %s في فندق رويال إن طرطوس في هذه التواريخ.' % (r['name'], r['ref']))
+        wa = wa_link(r['phone'], t)
+        acts = big(wa, 'أخبر الضيف (واتساب)', 'wa') if wa else ''
+        msg = '<p class="no-msg">%s</p>' % ('تم رفض الطلب، والغرفة تبقى متاحة.' if done == 'cancel' else 'هذا الطلب ملغى.')
+    return (head + '<main class="sheet">' + doc_band('طلب حجز <i>Booking request</i>', '<p dir="ltr">%s</p>' % e(r['ref']))
+            + '<div class="pad">' + msg + tbl + '<div class="acts">' + acts + '</div><p class="auto">يمكن أيضاً إدارة كل الطلبات من لوحة الحجوزات: royalinntartus.com/panel</p></div>'
+            + doc_foot('الكورنيش البحري، طرطوس، سوريا') + '</main>\n</body>\n</html>\n')
 
 
 def smtp_send(m):
@@ -345,7 +420,8 @@ def smtp_send(m):
 
 
 def mail_on():
-    return bool(os.environ.get('SMTP_HOST') and (os.environ.get('MAIL_FROM') or os.environ.get('SMTP_USER')))
+    """E-mails to guests. Off unless GUEST_MAIL=1: the hotel wants guests to get mail only from its own address."""
+    return bool(os.environ.get('SMTP_HOST') and (os.environ.get('MAIL_FROM') or os.environ.get('SMTP_USER')) and os.environ.get('GUEST_MAIL') == '1')
 
 
 def send_mail(to, subject, text, html=None):
@@ -390,7 +466,7 @@ def mail_html(lang, title, hello, intro, rows, button=None, notes=()):
 
 
 def _mail_rows(b, S, en):
-    room = ROOMS[b['room']][0 if en else 1] if b.get('room') in ROOMS else None
+    room = NAMES[b['room']][0 if en else 1] if b.get('room') in NAMES else None
     L = (('Booking number', 'Arrival', 'Departure', 'Nights', 'Guests', 'Room', 'Breakfast', 'Total', 'from', 'until', 'Included', 'Not included', 'tax included')
          if en else ('رقم الحجز', 'الوصول', 'المغادرة', 'الليالي', 'الضيوف', 'الغرفة', 'الفطور', 'المبلغ الإجمالي', 'من الساعة', 'حتى الساعة', 'مشمول', 'غير مشمول', 'شامل الضريبة'))
     agency_pays = b.get('agency_id') and b.get('pay_by') == 'agency'
@@ -422,11 +498,11 @@ def mail_confirmation(b, S=None):
     if en:
         sub, title, hello = 'Booking confirmed %s - Royal Inn Tartus' % b['ref'], 'Booking confirmed', 'Dear %s,' % b['name']
         intro = 'We are pleased to confirm your booking at Royal Inn Tartus and look forward to welcoming you.'
-        btn = ('Open your confirmation letter', link); notes = ('Payment is made at the hotel in cash, or by transfer to a Syrian bank in US dollars.', 'Cancellation is free up to 48 hours before arrival.', late_text(S, 'en'))
+        btn = ('Open your confirmation letter', link); notes = ('The booking is secured with a deposit by money transfer inside Syria; the balance is paid at the hotel in cash.', 'Cancellation is free up to 48 hours before arrival.', late_text(S, 'en'))
     else:
         sub, title, hello = 'تأكيد الحجز %s - فندق رويال إن طرطوس' % b['ref'], 'تم تأكيد الحجز', 'السيد/ة %s المحترم/ة،' % b['name']
         intro = 'يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس، ونتطلع إلى استقبالكم.'
-        btn = ('افتحوا رسالة التأكيد', link); notes = ('الدفع في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.', late_text(S, 'ar'))
+        btn = ('افتحوا رسالة التأكيد', link); notes = ('يُثبَّت الحجز بدفعة مقدّمة بحوالة داخل سوريا، ويُدفع الباقي في الفندق نقداً.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.', late_text(S, 'ar'))
     rows = _mail_rows(b, S, en)
     text = '\n'.join([hello, '', intro, ''] + ['%s: %s' % (k, v) for k, v in rows if v not in (None, '')] + ['', btn[0] + ': ' + link, ''] + [n for n in notes if n] + ['', 'Royal Inn Hotel · ' + HOTEL['phone']])
     return send_mail(b.get('email'), sub, text, mail_html('en' if en else 'ar', title, hello, intro, rows, btn, notes))
@@ -439,7 +515,7 @@ def notify_telegram(b):
         return
     try:
         import urllib.request, urllib.parse
-        room = ROOMS.get(b['room'] or '', ('-', 'أي غرفة'))[1]
+        room = NAMES.get(b['room'] or '', ('-', 'أي غرفة'))[1]
         text = '\n'.join([
             f"🔔 طلب حجز جديد {b['ref']}", f"الاسم: {b['name']}", f"الهاتف: {b['phone']}",
             f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {b['guests']}",
@@ -464,7 +540,8 @@ def notify(b):
 # ---------------------------------------------------------------- HTTP
 # Hotel rules the manager can change in the panel. Defaults follow common hotel practice; the hotel confirms them.
 DEFAULTS = {'checkin': '14:00', 'checkout': '12:00', 'remind_hours': '2', 'late_on': '1', 'late_grace': '60', 'late_half_until': '18:00',
-            'late_half_pct': '50', 'late_full_pct': '100', 'noshow_on': '0', 'early_note': '1'}
+            'late_half_pct': '50', 'late_full_pct': '100', 'noshow_on': '0', 'early_note': '1',
+            'deposit_info': 'يتم تثبيت الحجز بدفعة مقدّمة عبر حوالة داخل سوريا من خلال شركة الهرم - طرطوس، باسم: محمد شمس الدين وليد العليوي، هاتف: 0934589657. بعد التحويل أرسلوا لنا صورة الإيصال.'}
 TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
 
 
@@ -514,6 +591,8 @@ def desk_state(con):
 
 
 def sync_inventory(con, room):
+    if room not in ROOMS:
+        return
     """Once the hotel has entered its room numbers, the room count of that type follows them (rooms out of service do not count)."""
     n = con.execute("SELECT COUNT(*) FROM units WHERE room=?", (room,)).fetchone()[0]
     if n:
@@ -699,7 +778,7 @@ def export_book(con):
         tot, paid = r['total'], r['paid']
         rows.append([r['ref'], stt.get(r['status'], r['status']), SOURCES.get(r['source'] or 'web', 'الموقع'), AGENCIES.get(r['agency_id'], '') if r['agency_id'] else '',
                      ('الوكالة' if r['pay_by'] == 'agency' else 'الضيف') if r['agency_id'] else '', r['name'], r['phone'], r['email'], r['check_in'], r['check_out'], r['nights'], r['guests'],
-                     ROOMS[r['room']][1] if r['room'] in ROOMS else 'غير محدد', r['room_no'], 'نعم' if r['breakfast'] else 'لا', tot, r['late_fee'], paid,
+                     NAMES[r['room']][1] if r['room'] in NAMES else 'غير محدد', r['room_no'], 'نعم' if r['breakfast'] else 'لا', tot, r['late_fee'], paid,
                      None if tot is None or r['status'] == 'cancelled' else max(0, tot - (paid or 0)), r['net'] if r['pay_by'] == 'agency' else None,
                      r['arrived'], r['departed'], 'نعم' if r['no_show'] else '', r['referrer'], r['message'], r['staff_note'], r['created']])
     acols = [('الوكالة', 26, 's'), ('العمولة %', 10, 'n'), ('المسؤول', 20, 's'), ('الهاتف', 18, 's'), ('حجوزات مؤكَّدة', 12, 'n'), ('إجمالي المبيعات', 14, 'm'),
@@ -730,7 +809,7 @@ def units_view(con, ds, free_only=False):
                 out.append({'no': u['no'], 'room': u['room'], 'state': st})
             continue
         g = stay or leave
-        out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': ROOMS.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'],
+        out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': NAMES.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'],
                     'leaving_today': bool(leave), 'guest': g['name'] if g else None, 'ref': g['ref'] if g else None,
                     'until': g['check_out'] if g else None, 'since': g['check_in'] if g else None})
     return out
@@ -744,7 +823,7 @@ def letter_key(ref):
 def row(r):
     d = dict(r)
     d['breakfast'] = bool(d['breakfast'])
-    d['room_name'] = ROOMS.get(d.get('room') or '', ('Any room', 'أي غرفة'))[1]
+    d['room_name'] = NAMES.get(d.get('room') or '', ('Any room', 'أي غرفة'))[1]
     d['letter'] = '/api/confirmation/%s/%s' % (d['ref'], letter_key(d['ref']))
     d['agency_name'] = AGENCIES.get(d.get('agency_id')) if d.get('agency_id') else None
     d['source_name'] = SOURCES.get(d.get('source') or 'web', 'الموقع')
@@ -763,15 +842,15 @@ VIA = {'web': ('Hotel website', 'موقع الفندق'), 'desk': ('Hotel recept
 LETTER = {
     'ar': dict(dir='rtl', title='تأكيد حجز', hello='السيد/ة {name} المحترم/ة،', intro='يسرّنا تأكيد حجزكم في فندق رويال إن طرطوس، ونتطلع إلى استقبالكم.',
                yes='مشمول (10$ للشخص في اليوم)', no='غير مشمول (متوفر بـ 10$ للشخص)', ask='يُحدَّد من الفندق', tax='شامل الضريبة', any='تُحدَّد من الفندق',
-               from14='من الساعة 14:00', until12='حتى الساعة 12:00', confirmed='مؤكَّد', by_agency='يُسدَّد عن طريق الوكالة: {a}', at_hotel='في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي',
-               t=['الدفع في الفندق نقداً، أو بحوالة إلى مصرف سوري بالدولار الأمريكي.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.',
+               from14='من الساعة 14:00', until12='حتى الساعة 12:00', confirmed='مؤكَّد', by_agency='يُسدَّد عن طريق الوكالة: {a}', at_hotel='دفعة مقدّمة بحوالة داخل سوريا لتثبيت الحجز، والباقي في الفندق نقداً',
+               t=['يُثبَّت الحجز بدفعة مقدّمة بحوالة داخل سوريا، ويُدفع الباقي في الفندق نقداً.', 'الإلغاء مجاني حتى 48 ساعة قبل موعد الوصول.',
                   'الاستقبال مفتوح على مدار 24 ساعة، وموقف السيارات مجاني للضيوف.', 'يُرجى إحضار هذا التأكيد أو رقم الحجز عند الوصول.'],
                bye='ننتظركم بكل سرور.', sign='إدارة الحجوزات، فندق رويال إن', addr='الكورنيش البحري، طرطوس، سوريا', print='طباعة / حفظ PDF',
                pending_h='الحجز لم يُؤكَّد بعد', pending_p='سيصلكم التأكيد من الفندق قريباً.', cancelled_h='هذا الحجز ملغى', none='الرابط غير صحيح.'),
     'en': dict(dir='ltr', title='Booking Confirmation', hello='Dear {name},', intro='We are pleased to confirm your booking at Royal Inn Tartus and look forward to welcoming you.',
                yes='Included ($10 per person per day)', no='Not included (available at $10 per person)', ask='To be confirmed by the hotel', tax='tax included', any='To be assigned by the hotel',
-               from14='from 14:00', until12='until 12:00', confirmed='Confirmed', by_agency='Settled through the agency: {a}', at_hotel='At the hotel in cash, or by transfer to a Syrian bank in US dollars',
-               t=['Payment is made at the hotel in cash, or by transfer to a Syrian bank in US dollars.', 'Cancellation is free up to 48 hours before arrival.',
+               from14='from 14:00', until12='until 12:00', confirmed='Confirmed', by_agency='Settled through the agency: {a}', at_hotel='Deposit by money transfer inside Syria to secure the booking; the balance at the hotel in cash',
+               t=['The booking is secured with a deposit by money transfer inside Syria; the balance is paid at the hotel in cash.', 'Cancellation is free up to 48 hours before arrival.',
                   'Reception is open 24 hours and parking is free for guests.', 'Please bring this confirmation or your booking number on arrival.'],
                bye='We look forward to welcoming you.', sign='Reservations, Royal Inn Hotel', addr='Sea Corniche, Tartus, Syria', print='Print / save as PDF',
                pending_h='This booking is not confirmed yet', pending_p='The hotel will send your confirmation shortly.', cancelled_h='This booking was cancelled', none='This link is not valid.'),
@@ -790,7 +869,7 @@ def _fd(ds):
 def doc_head(lang, direction, title):
     return ('<!DOCTYPE html>\n<html lang="%s" dir="%s">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             '<meta name="robots" content="noindex, nofollow">\n<title>%s | Royal Inn Tartus</title>\n<link rel="icon" href="/favicon.ico">\n'
-            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=3">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
+            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=4">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
             % (lang, direction, _esc(title)))
 
 
@@ -827,7 +906,7 @@ def letter_html(r, S=None):
     sec = lambda k, rows: ('<section class="sec"><h2>%s <i>%s</i></h2><table class="lt">%s</table></section>'
                            % (e(SEC[k][i]), e(SEC[k][j]), ''.join('<tr><th>%s</th><td>%s</td></tr>' % (lab(a), v) for a, v in rows)))
     agency = AGENCIES.get(g('agency_id')) if g('agency_id') else None
-    room = ROOMS[r['room']][0 if lang == 'en' else 1] if r['room'] in ROOMS else L['any']
+    room = NAMES[r['room']][0 if lang == 'en' else 1] if r['room'] in NAMES else L['any']
     dn = (['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] if lang == 'en'
           else ['الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'])
     wd = lambda ds: dn[dt.date.fromisoformat(ds).weekday()]
@@ -890,12 +969,18 @@ def pricelist_html(con, agency=None):
     body = ''
     for k, (en, ar) in ROOMS.items():
         pr = prices.get(k); p1 = pr['price'] if pr else None; p2 = pr['price2'] if pr else None
+        if k == 'royal-suite':
+            st = prices.get('standard')
+            s1 = st['price'] if st else None; s2 = (st['price2'] or s1) if st else None
+            p1 = None if (p1 is None or s1 is None) else p1 + s1
+            p2 = None if (p1 is None or s2 is None) else (pr['price'] + s2)
+            ar, en = ar + ' (الجناح + الغرفة المتصلة، يُباعان معاً)', en + ' (suite + connecting room, sold together)'
         nt = ' / '.join(x for x in (net(p1), net(p2) if p2 else '') if x)
         body += '<tr><td><b>%s</b> <i>%s</i></td><td>%s</td><td>%s</td>%s</tr>' % (e(ar), e(en), money(p1), money(p2) if p2 else ('—' if p1 is not None else money(None)), ('<td dir="ltr" class="num">%s</td>' % (nt or '—')) if agency else '')
     seasons = con.execute('SELECT * FROM rates WHERE date_to >= ? ORDER BY date_from, id', (today,)).fetchall()
     srows = ''
     for x in seasons:
-        nm = ROOMS[x['room']] if x['room'] in ROOMS else ('All rooms', 'كل الغرف')
+        nm = NAMES[x['room']] if x['room'] in NAMES else ('All rooms', 'كل الغرف')
         srows += '<tr><td><span dir="ltr">%s – %s</span></td><td><b>%s</b> <i>%s</i></td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
             _fd(x['date_from']), _fd(x['date_to']), e(nm[1]), e(nm[0]), money(x['price']) if x['price'] is not None else '—', ('$%d' % x['price2']) if x['price2'] else '—', e(x['note'] or ''))
     season = ('<section class="sec"><h2>أسعار خاصة بتواريخ محددة <i>Rates for specific dates</i></h2><table class="grid"><tr><th>التاريخ <i>Dates</i></th><th>الغرفة <i>Room</i></th>'
@@ -1028,6 +1113,23 @@ class H(BaseHTTPRequestHandler):
                         return self.send(404, {'ok': False})
                 html_doc = pricelist_html(con, agency)
             return self.send(200, raw=html_doc.encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow'})
+        m = re.fullmatch(r'/api/act/(RI-[A-Z0-9]{6})/([0-9a-f]{20})', p)
+        if m:
+            if not hmac.compare_digest(letter_key('act:' + m.group(1)), m.group(2)):
+                return self.send(404, raw=act_page(None).encode('utf-8'), ctype='text/html; charset=utf-8')
+            do = q.get('do'); done = None
+            with LOCK, db() as con:
+                r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone(); S = settings(con)
+                if r and r['status'] == 'new' and do in ('confirm', 'cancel'):
+                    st = 'confirmed' if do == 'confirm' else 'cancelled'
+                    con.execute('UPDATE bookings SET status=?, staff_note=?, updated=? WHERE ref=?',
+                                (st, ((r['staff_note'] or '') + ' · %s من البريد' % ('أُكِّد' if st == 'confirmed' else 'رُفض')).strip(' ·'), now(), r['ref']))
+                    done = do
+                    r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
+                    if st == 'confirmed' and r['email'] and mail_on():
+                        threading.Thread(target=mail_confirmation, args=(dict(r), S), daemon=True).start()
+                load_agencies(con)
+            return self.send(200 if r else 404, raw=act_page(r, done, S).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store'})
         if p == '/api/offers':
             with db() as con:
                 rows = con.execute('SELECT * FROM offers WHERE date_to >= ? ORDER BY percent DESC, date_from', (dt.date.today().isoformat(),)).fetchall()
@@ -1130,7 +1232,7 @@ class H(BaseHTTPRequestHandler):
                 if p == '/api/admin/units':
                     d0 = parse_day(q.get('date')) or dt.date.today()
                     return self.send(200, {'ok': True, 'date': d0.isoformat(), 'units': units_view(con, d0.isoformat()),
-                                           'rooms': [{'id': k, 'name': v[1]} for k, v in ROOMS.items()]})
+                                           'rooms': [{'id': k, 'name': v[1]} for k, v in ROOMS.items()] + [{'id': CONNECT, 'name': NAMES[CONNECT][1]}]})
                 if p == '/api/admin/units/free':
                     a, b = parse_day(q.get('in')), parse_day(q.get('out'))
                     if not a or not b or b <= a:
@@ -1501,7 +1603,9 @@ class H(BaseHTTPRequestHandler):
                     if k not in d:
                         continue
                     v = str(d[k]).strip()
-                    if k in ('checkin', 'checkout', 'late_half_until'):
+                    if k == 'deposit_info':
+                        v = clean(d[k], 500)
+                    elif k in ('checkin', 'checkout', 'late_half_until'):
                         if not TIME_RE.match(v):
                             return self.send(400, {'ok': False, 'error': k})
                     elif k in ('late_on', 'noshow_on', 'early_note'):
@@ -1524,7 +1628,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {'ok': True})
             if p == '/api/admin/units':
                 room = d.get('room')
-                if room not in ROOMS:
+                if room not in ROOMS and room != CONNECT:
                     return self.send(400, {'ok': False, 'error': 'room'})
                 nos = []
                 a, b = clean(d.get('no'), 12), clean(d.get('to'), 12)
@@ -1554,7 +1658,7 @@ class H(BaseHTTPRequestHandler):
                     else:
                         if d.get('state') in ('clean', 'dirty', 'out'):
                             con.execute('UPDATE units SET state=? WHERE id=?', (d['state'], int(m.group(1))))
-                        if d.get('room') in ROOMS:
+                        if d.get('room') in ROOMS or d.get('room') == CONNECT:
                             con.execute('UPDATE units SET room=? WHERE id=?', (d['room'], int(m.group(1))))
                         if 'note' in d:
                             con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))

@@ -203,7 +203,7 @@
   /* ---------------------------------------------------------------- booking lists */
   var agLoaded = false;
   function loadList() {
-    (agLoaded ? Promise.resolve() : agencies()).then(function () { return ROOMS.length ? null : rooms(); }).then(function () { return api('bookings?status=' + tab); }).then(function (j) {
+    (RULES.deposit_info !== undefined ? Promise.resolve() : api('settings').then(function (j) { if (j && j.settings) RULES = j.settings; })).then(function () { return agLoaded ? null : agencies(); }).then(function () { return ROOMS.length ? null : rooms(); }).then(function () { return api('bookings?status=' + tab); }).then(function (j) {
       if (gone(j) || !j.items) return;
       badge((j.counts && j.counts['new']) || 0);
       ITEMS = j.items;
@@ -313,6 +313,21 @@
       wa.href = 'https://wa.me/' + digits(b.phone) + '?text=' + encodeURIComponent(text);
       act.appendChild(wa);
       var tel = el('a', 'btn ghost', 'اتصال'); tel.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); act.appendChild(tel);
+      if (b.status === 'new') {
+        // ask the guest for the deposit that secures the booking (amount typed by the staff, transfer text from the settings)
+        var dep = el('div', 'deposit'), dl = el('label', null, 'مبلغ الدفعة $'), di = el('input'); di.type = 'number'; di.min = 1; di.dir = 'ltr'; di.inputMode = 'numeric'; dl.appendChild(di); dep.appendChild(dl);
+        var da = el('a', 'btn gold', 'اطلب الدفعة (واتساب)'); da.target = '_blank'; da.rel = 'noopener';
+        var depText = function () {
+          var info = (RULES && RULES.deposit_info) || '';
+          var amt = di.value ? di.value + '$' : '';
+          return b.lang === 'en'
+            ? 'Hello ' + b.name + ', thank you for your booking request ' + b.ref + ' at Royal Inn Tartus (' + b.check_in + ' to ' + b.check_out + (b.total ? ', total $' + b.total : '') + '). To secure the booking please send a deposit' + (amt ? ' of ' + amt : '') + ' by money transfer inside Syria. ' + info + ' Your booking is confirmed once we receive it.'
+            : 'مرحباً ' + b.name + '، شكراً لطلب الحجز ' + b.ref + ' في فندق رويال إن طرطوس (من ' + fmt(b.check_in) + ' إلى ' + fmt(b.check_out) + room + (b.total ? '، المبلغ الإجمالي ' + b.total + '$' : '') + '). لتثبيت الحجز يُرجى إرسال دفعة مقدّمة' + (amt ? ' بقيمة ' + amt : '') + '. ' + info + ' يتم تأكيد الحجز فور وصول الدفعة.';
+        };
+        var upd = function () { da.href = 'https://wa.me/' + digits(b.phone) + '?text=' + encodeURIComponent(depText()); };
+        di.addEventListener('input', upd); upd(); dep.appendChild(da);
+        body.appendChild(dep);
+      }
     }
     if (b.status === 'confirmed') {
       // confirmation letter: one tap sends the guest a link to it; it also prints as a PDF
@@ -566,6 +581,7 @@
       if (gone(j) || !j.ok) return; var f = $('#rules-form'), s = j.settings; RULES = s;
       ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { f[k].value = s[k]; });
       ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { f[k].checked = s[k] === '1'; });
+      f.deposit_info.value = s.deposit_info || '';
       $('#rules-clock').textContent = 'ساعة الفندق الآن: ' + j.clock;
       $('#mail-state').textContent = j.mail ? 'الحالة: مفعَّل. الرسائل تُرسل تلقائياً.' : 'الحالة: غير مفعَّل بعد. يجب ربط صندوق بريد من إعدادات الخادم (يقوم به محمود).';
     });
@@ -574,6 +590,7 @@
     e.preventDefault(); var f = e.target, d = {};
     ['checkin', 'checkout', 'remind_hours', 'late_grace', 'late_half_until', 'late_half_pct', 'late_full_pct'].forEach(function (k) { d[k] = f[k].value; });
     ['late_on', 'noshow_on', 'early_note'].forEach(function (k) { d[k] = f[k].checked; });
+    d.deposit_info = f.deposit_info.value;
     api('settings', d).then(function (j) { if (j.ok) { toast('تم الحفظ'); loadRules(); } else if (!gone(j) && j.status) toast(j.error === 'late_half_until' ? 'موعد نصف اليوم يجب أن يكون بعد موعد المغادرة والمهلة' : 'تحقّق من القيم'); });
   });
 
