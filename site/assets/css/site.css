@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=5032cdb7) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=5032cdb7) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=5032cdb7) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=0a965f8a) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=0a965f8a) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=0a965f8a) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -421,3 +421,10 @@ h1{font-size:1rem}
 @media (hover:hover){.gcard:hover{box-shadow:0 14px 34px rgba(15,61,82,.12);transform:translateY(-2px)}}
 @media (max-width:699px){.r219{aspect-ratio:16/9}}
 @media (min-width:1100px){.cards.c4{grid-template-columns:repeat(4,1fr)}}
+
+.status{max-width:640px;margin-inline:auto;display:grid;gap:14px;grid-template-columns:1fr 1fr;align-items:end}
+.status .btn{grid-column:1/-1;justify-self:center;min-width:220px}
+.status-out{grid-column:1/-1;padding:14px 16px;border-inline-start:3px solid var(--gold);background:var(--foam);line-height:1.7}
+.status-out[hidden]{display:none}.status-out strong{display:block;color:var(--sea)}.status-out p{margin:4px 0 0;font-size:.94rem}
+.status-out.ok{border-color:#1f8f55;background:#edf7f1}.status-out.bad{border-color:#a23b3b;background:#f8eeee}
+@media (max-width:520px){.status{grid-template-columns:1fr}}

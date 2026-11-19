@@ -268,7 +268,7 @@ def unsign(token):
 
 
 # ---------------------------------------------------------------- notifications
-def notify(b):
+def notify_email(b):
     host, to = os.environ.get('SMTP_HOST'), os.environ.get('NOTIFY_TO')
     if not host or not to:
         return
@@ -295,6 +295,31 @@ def notify(b):
         s.quit()
     except Exception as e:  # a failed e-mail never loses the request
         print('notify failed:', type(e).__name__, flush=True)
+
+
+def notify_telegram(b):
+    """Instant message to the hotel's Telegram chat. Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID."""
+    token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat:
+        return
+    try:
+        import urllib.request, urllib.parse
+        room = ROOMS.get(b['room'] or '', ('-', 'أي غرفة'))[1]
+        text = '\n'.join([
+            f"🔔 طلب حجز جديد {b['ref']}", f"الاسم: {b['name']}", f"الهاتف: {b['phone']}",
+            f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {b['guests']}",
+            f"الغرفة: {room}", f"الفطور: {'نعم' if b['breakfast'] else 'لا'}",
+            f"المبلغ: ${b['total']}" if b.get('total') else 'المبلغ: عند الطلب', f"ملاحظة: {b['message'] or '-'}",
+            '', 'https://royalinntartus.com/panel/'])
+        data = urllib.parse.urlencode({'chat_id': chat, 'text': text, 'disable_web_page_preview': 'true'}).encode()
+        urllib.request.urlopen(urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data), timeout=12).read()
+    except Exception as e:  # never loses the request, never prints the token
+        print('telegram notify failed:', type(e).__name__, flush=True)
+
+
+def notify(b):
+    notify_email(b)
+    notify_telegram(b)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -388,6 +413,20 @@ class H(BaseHTTPRequestHandler):
                 rooms = quote(con, dates[0], dates[1], guests, room)
                 any_open = availability(con, dates[0], dates[1], None)
             return self.send(200, {'ok': True, 'nights': (dates[1] - dates[0]).days, 'open': any_open, 'rooms': rooms, 'breakfast': BREAKFAST})
+        if p == '/api/booking/status':
+            # a guest checks their own request: booking number + last four digits of the phone they gave
+            if limited('st:' + self.ip(), 12, 600):
+                return self.send(429, {'ok': False, 'error': 'busy'})
+            ref = (q.get('ref') or '').strip().upper()
+            last4 = re.sub(r'\D', '', q.get('phone') or '')[-4:]
+            if not re.fullmatch(r'RI-[A-Z0-9]{6}', ref) or len(last4) != 4:
+                return self.send(400, {'ok': False, 'error': 'fields'})
+            with db() as con:
+                r = con.execute('SELECT * FROM bookings WHERE ref=?', (ref,)).fetchone()
+            if not r or re.sub(r'\D', '', r['phone'])[-4:] != last4:
+                return self.send(404, {'ok': False, 'error': 'none'})
+            return self.send(200, {'ok': True, 'ref': r['ref'], 'status': r['status'], 'in': r['check_in'], 'out': r['check_out'],
+                                   'nights': r['nights'], 'guests': r['guests'], 'room': r['room'], 'total': r['total'], 'breakfast': bool(r['breakfast'])})
         if p.startswith('/api/admin/'):
             if p == '/api/admin/me':
                 return self.send(200, {'ok': True, 'auth': bool(self.session()), 'configured': bool(os.environ.get('PANEL_PASSWORD'))})

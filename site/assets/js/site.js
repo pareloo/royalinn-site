@@ -304,5 +304,37 @@
     rail.scrollBy({ left: step * dir * (b.getAttribute('data-rail') === 'next' ? 1 : -1), behavior: calm ? 'auto' : 'smooth' });
   });
 
+  /* booking status check: booking number + last four phone digits */
+  [].forEach.call(d.querySelectorAll('[data-status]'), function (f) {
+    var out = f.querySelector('[data-out]'), L = f.dataset, busy = false;
+    function show(cls, lines) {
+      out.textContent = ''; out.className = 'status-out ' + cls;
+      lines.forEach(function (t, i) { var p = d.createElement(i ? 'p' : 'strong'); p.textContent = t; out.appendChild(p); });
+      out.hidden = false;
+    }
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (busy) { return; }
+      var ref = f.ref.value.trim().toUpperCase().replace(/\s+/g, ''), ph = f.phone.value.replace(/\D/g, '');
+      if (ref && ref.indexOf('RI-') !== 0) { ref = 'RI-' + ref.replace(/^RI/, ''); }
+      if (!/^RI-[A-Z0-9]{6}$/.test(ref) || ph.length !== 4) { return show('bad', [L.none]); }
+      busy = true;
+      fetch(L.api + 'booking/status?ref=' + encodeURIComponent(ref) + '&phone=' + ph, { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.json().then(function (j) { j.http = r.status; return j; }); })
+        .then(function (j) {
+          busy = false;
+          if (j.http === 429) { return show('bad', [L.busy]); }
+          if (!j.ok) { return show('bad', [L.none]); }
+          var opt = j.room && d.querySelector('[data-booking] select[name=room] option[value="' + j.room + '"]');
+          var line = [j['in'] + ' → ' + j.out, j.nights + ' ' + L.nights, j.guests + ' ' + L.guests];
+          if (opt) { line.push(opt.textContent); }
+          var lines = [L[j.status] || L['new'], j.ref + ' · ' + line.join(' · ')];
+          if (j.total) { lines.push(L.total + ': $' + j.total); }
+          show(j.status === 'confirmed' ? 'ok' : j.status === 'cancelled' ? 'bad' : 'wait', lines);
+        })
+        .catch(function () { busy = false; show('bad', [L.none]); });
+    });
+  });
+
   window.RoyalInn = { scan: function () { scan(); onScroll(); } };
 })();
