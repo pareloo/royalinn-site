@@ -380,5 +380,51 @@
     }).catch(function () {});
   })();
 
+  /* business requests (groups, companies, agencies, weddings): saved on the hotel's server, WhatsApp as fallback */
+  each('[data-inquiry]', function (f) {
+    var D = f.dataset, err = f.querySelector('[data-err]'), done = f.querySelector('[data-done]');
+    var kind = f.querySelector('[name=kind]');
+    var h = (location.hash || '').replace('#', '');
+    if (h && kind.querySelector('option[value="' + h + '"]')) { kind.value = h; }
+    function val(n) { var x = f.querySelector('[name=' + n + ']'); return x ? x.value.trim() : ''; }
+    function summary() {
+      var k = kind.options[kind.selectedIndex].text, parts = [D.waMsg, k + ': ' + val('name')];
+      ['company', 'phone', 'date', 'guests', 'rooms', 'nights', 'message'].forEach(function (n) { if (val(n)) { parts.push(val(n)); } });
+      return parts.join('\n');
+    }
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      err.hidden = true;
+      each('.field.bad', function (x) { x.classList.remove('bad'); }, f);
+      var bad = [];
+      if (val('name').length < 2) { bad.push('name'); }
+      if (val('phone').replace(/\D/g, '').length < 7) { bad.push('phone'); }
+      if (bad.length) {
+        bad.forEach(function (n) { f.querySelector('[name=' + n + ']').closest('.field').classList.add('bad'); });
+        err.textContent = D.errFields; err.hidden = false; return;
+      }
+      var waHref = 'https://wa.me/' + D.wa + '?text=' + encodeURIComponent(summary());
+      if (!D.api || !window.fetch) { window.open(waHref, '_blank', 'noopener'); return; }
+      var body = { lang: D.lang, website: val('website') };
+      ['kind', 'name', 'company', 'phone', 'email', 'date', 'guests', 'rooms', 'nights', 'message'].forEach(function (n) { body[n] = val(n); });
+      var btn = f.querySelector('[data-send]'); btn.disabled = true;
+      fetch(D.api + 'inquiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json().then(function (j) { j.status = r.status; return j; }); })
+        .then(function (j) {
+          btn.disabled = false;
+          if (j.ok) {
+            each('.field, .inq-actions', function (x) { x.hidden = true; }, f);
+            f.querySelector('[data-ref]').textContent = '#' + j.id;
+            f.querySelector('[data-wa-done]').href = 'https://wa.me/' + D.wa + '?text=' + encodeURIComponent(summary() + '\n' + D.doneId + ': #' + j.id);
+            done.hidden = false; done.focus();
+          } else if (j.error === 'fields' && j.fields) {
+            j.fields.forEach(function (n) { var x = f.querySelector('[name=' + n + ']'); if (x) { x.closest('.field').classList.add('bad'); } });
+            err.textContent = D.errFields; err.hidden = false;
+          } else { err.textContent = j.status === 429 ? D.errBusy : D.errNet; err.hidden = false; }
+        })
+        .catch(function () { btn.disabled = false; err.textContent = D.errNet; err.hidden = false; });
+    });
+  });
+
   window.RoyalInn = { scan: function () { scan(); onScroll(); } };
 })();

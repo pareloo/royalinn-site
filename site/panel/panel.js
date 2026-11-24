@@ -57,13 +57,61 @@
   function load() {
     var list = tab === 'new' || tab === 'active' || tab === 'all';
     $('#view-list').hidden = !list;
-    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies', 'rack', 'rules'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
+    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies', 'rack', 'rules', 'inq'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
     if (list) loadList(); else if (tab === 'home') loadHome(); else if (tab === 'closures') loadClosures(); else if (tab === 'inventory') loadInventory();
-    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'rack') { rooms(); loadRack(); } else if (tab === 'rules') loadRules(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers();
+    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'rack') { rooms(); loadRack(); } else if (tab === 'rules') loadRules(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers(); else if (tab === 'inq') loadInq();
+    inqBadge();
   }
 
   // the count of waiting requests shows on the menu and in the browser tab title, on every screen
   function badge(n) { var b = $('#c-new'); b.textContent = n; b.hidden = !n; document.title = (n ? '(' + n + ') ' : '') + 'لوحة الحجوزات | Royal Inn'; }
+
+
+  /* ---------------------------------------------------------------- business requests from the website */
+  var INQ_ST = 'open';
+  var INQ_LABEL = { 'new': 'جديد', contacted: 'تم التواصل', won: 'تم الاتفاق', lost: 'لم يتم' };
+  function inqBadge() {
+    api('inquiries?status=new').then(function (j) { if (!j.ok) return; var b = $('#c-inq'); var n = j.counts['new'] || 0; b.textContent = n; b.hidden = !n; });
+  }
+  each('#inq-filter .chip', function (c) {
+    c.addEventListener('click', function () { INQ_ST = c.getAttribute('data-st'); each('#inq-filter .chip', function (x) { x.classList.toggle('on', x === c); }); loadInq(); });
+  });
+  function loadInq() {
+    api('inquiries?status=' + INQ_ST).then(function (j) {
+      if (gone(j)) return;
+      var box = $('#inq-list'); box.textContent = '';
+      if (!j.items || !j.items.length) { box.appendChild(el('p', 'empty', 'لا توجد طلبات هنا بعد.')); return; }
+      j.items.forEach(function (r) {
+        var c = el('div', 'card');
+        var h = el('div', 'row-head');
+        h.appendChild(el('strong', null, '#' + r.id + ' · ' + r.kind_label));
+        h.appendChild(el('span', 'pill st-' + r.status, INQ_LABEL[r.status] || r.status));
+        c.appendChild(h);
+        var info = [r.name, r.company, r.phone, r.email, r.date ? 'التاريخ: ' + fmt(r.date) : '', r.guests ? 'الأشخاص: ' + r.guests : '',
+                    r.rooms ? 'الغرف: ' + r.rooms : '', r.nights ? 'الليالي: ' + r.nights : '', 'وصل: ' + (r.created || '').slice(0, 16).replace('T', ' ')];
+        c.appendChild(el('p', 'muted', info.filter(Boolean).join(' · ')));
+        if (r.message) c.appendChild(el('p', null, r.message));
+        var act = el('div', 'actions');
+        var hello = r.lang === 'ar' ? 'مرحباً ' + r.name + '، معكم فندق رويال إن طرطوس بخصوص طلبكم على موقعنا.' : 'Hello ' + r.name + ', this is Royal Inn Tartus regarding your request on our website.';
+        var wa = el('a', 'btn wa', 'رد على واتساب'); wa.href = 'https://wa.me/' + digits(r.phone) + '?text=' + encodeURIComponent(hello); wa.target = '_blank'; wa.rel = 'noopener'; act.appendChild(wa);
+        var tel = el('a', 'btn ghost', 'اتصال'); tel.href = 'tel:' + r.phone.replace(/[^0-9+]/g, ''); act.appendChild(tel);
+        [['contacted', 'تم التواصل'], ['won', 'تم الاتفاق'], ['lost', 'لم يتم']].forEach(function (x) {
+          if (r.status === x[0]) return;
+          var b = el('button', 'ghost', x[1]); b.type = 'button';
+          b.addEventListener('click', function () { api('inquiries/' + r.id, { status: x[0] }).then(function (k) { if (!gone(k)) { toast('تم الحفظ.'); loadInq(); inqBadge(); } }); });
+          act.appendChild(b);
+        });
+        c.appendChild(act);
+        var nf = el('form', 'note-form');
+        var ni = el('input'); ni.type = 'text'; ni.maxLength = 600; ni.placeholder = 'ملاحظة داخلية (السعر المعروض، موعد الاتصال…)'; ni.value = r.staff_note || '';
+        var ns = el('button', 'ghost', 'حفظ الملاحظة'); ns.type = 'submit';
+        nf.appendChild(ni); nf.appendChild(ns);
+        nf.addEventListener('submit', function (e) { e.preventDefault(); api('inquiries/' + r.id, { staff_note: ni.value }).then(function (k) { if (!gone(k)) toast('تم حفظ الملاحظة.'); }); });
+        c.appendChild(nf);
+        box.appendChild(c);
+      });
+    });
+  }
 
   /* ---------------------------------------------------------------- home */
   function kpi(n, label, cls, target) {

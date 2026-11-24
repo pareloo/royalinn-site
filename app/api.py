@@ -95,6 +95,10 @@ def init():
         CREATE TABLE IF NOT EXISTS agencies(
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT,
             commission INTEGER NOT NULL DEFAULT 0, note TEXT, created TEXT);
+        CREATE TABLE IF NOT EXISTS inquiries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, lang TEXT, kind TEXT NOT NULL, name TEXT NOT NULL, company TEXT,
+            phone TEXT NOT NULL, email TEXT, date TEXT, guests INTEGER, rooms INTEGER, nights INTEGER, message TEXT,
+            status TEXT NOT NULL DEFAULT 'new', staff_note TEXT, updated TEXT);
         CREATE TABLE IF NOT EXISTS agency_payments(
             id INTEGER PRIMARY KEY AUTOINCREMENT, agency_id INTEGER NOT NULL, amount INTEGER NOT NULL, date TEXT NOT NULL, note TEXT, created TEXT);
         ''')
@@ -278,9 +282,74 @@ def validate_booking(d):
         errs.append('room')
     if not 1 <= guests <= 12 or too_many(room if room in ROOMS else None, guests):
         errs.append('guests')
-    lang = 'en' if d.get('lang') == 'en' else 'ar'
+    lang = 'en' if d.get('lang') in ('en', 'tr') else 'ar'   # Turkish visitors get English letters and mails
     return errs, dict(dates=dates, name=name, phone=phone, email=email or None, room=room or None, message=msg or None,
                       guests=guests, breakfast=1 if d.get('breakfast') in (True, 1, '1', 'on', 'true') else 0, lang=lang)
+
+
+# ---------------------------------------------------------------- business requests (agencies, companies, weddings, groups)
+KINDS = {'agency': 'وكالة سفر', 'company': 'شركة / مؤسسة', 'wedding': 'عرس أو مناسبة', 'group': 'مجموعة أو عائلة كبيرة',
+         'long': 'إقامة طويلة', 'other': 'طلب آخر'}
+INQ_STATUSES = ('new', 'contacted', 'won', 'lost')
+
+
+def validate_inquiry(d):
+    errs = []
+    kind = clean(d.get('kind'), 20)
+    name, company = clean(d.get('name'), 80), clean(d.get('company'), 100)
+    phone, email = clean(d.get('phone'), 24), clean(d.get('email'), 254)
+    msg = clean(d.get('message'), 1000)
+    date = parse_day(d.get('date')) if d.get('date') else None
+    def num(k, hi):
+        try:
+            v = int(d.get(k) or 0)
+        except (TypeError, ValueError):
+            return None
+        return v if 0 <= v <= hi else None
+    guests, rooms, nights = num('guests', 3000), num('rooms', 65), num('nights', 365)
+    if kind not in KINDS:
+        errs.append('kind')
+    if len(name) < 2:
+        errs.append('name')
+    if not PHONE_RE.match(phone) or len(re.sub(r'\D', '', phone)) < 7:
+        errs.append('phone')
+    if email and not EMAIL_RE.match(email):
+        errs.append('email')
+    if d.get('date') and not date:
+        errs.append('date')
+    if guests is None:
+        errs.append('guests')
+    if rooms is None:
+        errs.append('rooms')
+    if nights is None:
+        errs.append('nights')
+    lang = d.get('lang') if d.get('lang') in ('en', 'tr') else 'ar'
+    return errs, dict(kind=kind, name=name, company=company or None, phone=phone, email=email or None, message=msg or None,
+                      date=date.isoformat() if date else None, guests=guests or None, rooms=rooms or None, nights=nights or None, lang=lang)
+
+
+def inquiry_text(r):
+    lines = [f"📩 طلب جديد من الموقع #{r['id']}: {KINDS.get(r['kind'], r['kind'])}", f"الاسم: {r['name']}"]
+    if r.get('company'):
+        lines.append(f"الجهة: {r['company']}")
+    lines.append(f"الهاتف: {r['phone']}")
+    if r.get('email'):
+        lines.append(f"البريد: {r['email']}")
+    if r.get('date'):
+        lines.append(f"التاريخ: {r['date']}")
+    for k, lab in (('guests', 'عدد الأشخاص'), ('rooms', 'عدد الغرف'), ('nights', 'عدد الليالي')):
+        if r.get(k):
+            lines.append(f"{lab}: {r[k]}")
+    lines.append(f"اللغة: {r['lang']}")
+    lines.append(f"التفاصيل: {r.get('message') or '-'}")
+    hello = {'en': 'Hello, this is Royal Inn Tartus regarding your request on our website.',
+             'tr': 'Hello, this is Royal Inn Tartus regarding your request on our website.'}.get(r['lang'], 'مرحباً، معكم فندق رويال إن طرطوس بخصوص طلبكم على موقعنا.')
+    lines.append('\nالرد على واتساب:\n' + wa_link(r['phone'], hello))
+    return '\n'.join(lines)
+
+
+def notify_inquiry(r):
+    send_staff(inquiry_text(r), f"طلب جديد من الموقع #{r['id']} - {KINDS.get(r['kind'], '')} - Royal Inn")
 
 
 # ---------------------------------------------------------------- rate limits (memory only)
@@ -1202,6 +1271,19 @@ class H(BaseHTTPRequestHandler):
                         return self.send(400, {'ok': False})
                     counts = {s: con.execute('SELECT COUNT(*) FROM bookings WHERE status=?', (s,)).fetchone()[0] for s in STATUSES}
                     return self.send(200, {'ok': True, 'items': [row(r) for r in rows], 'counts': counts})
+                if p == '/api/admin/inquiries':
+                    st = q.get('status', 'open')
+                    if st == 'open':
+                        rows = con.execute("SELECT * FROM inquiries WHERE status IN ('new','contacted') ORDER BY id DESC LIMIT 500").fetchall()
+                    elif st in INQ_STATUSES:
+                        rows = con.execute('SELECT * FROM inquiries WHERE status=? ORDER BY id DESC LIMIT 500', (st,)).fetchall()
+                    else:
+                        rows = con.execute('SELECT * FROM inquiries ORDER BY id DESC LIMIT 500').fetchall()
+                    counts = {x: con.execute('SELECT COUNT(*) FROM inquiries WHERE status=?', (x,)).fetchone()[0] for x in INQ_STATUSES}
+                    items = [dict(r) for r in rows]
+                    for it in items:
+                        it['kind_label'] = KINDS.get(it['kind'], it['kind'])
+                    return self.send(200, {'ok': True, 'items': items, 'counts': counts, 'kinds': KINDS})
                 if p == '/api/admin/dashboard':
                     load_agencies(con)
                     # one screen for the front desk: today, tonight, and the next two weeks
@@ -1377,6 +1459,22 @@ class H(BaseHTTPRequestHandler):
             threading.Thread(target=notify, args=(rec,), daemon=True).start()
             return self.send(200, {'ok': True, 'ref': ref, 'available': avail, 'total': total})
 
+        if p == '/api/inquiry':
+            if d.get('website'):                     # hidden field, filled only by bots
+                return self.send(200, {'ok': True, 'id': 0})
+            if limited('iq:' + self.ip(), 5, 600):
+                return self.send(429, {'ok': False, 'error': 'busy'})
+            errs, v = validate_inquiry(d)
+            if errs:
+                return self.send(400, {'ok': False, 'error': 'fields', 'fields': errs})
+            with LOCK, db() as con:
+                v['created'] = now()
+                cur = con.execute('INSERT INTO inquiries(created,lang,kind,name,company,phone,email,date,guests,rooms,nights,message,status) '
+                                  "VALUES(:created,:lang,:kind,:name,:company,:phone,:email,:date,:guests,:rooms,:nights,:message,'new')", v)
+                v['id'] = cur.lastrowid
+            threading.Thread(target=notify_inquiry, args=(v,), daemon=True).start()
+            return self.send(200, {'ok': True, 'id': v['id']})
+
         if p == '/api/admin/login':
             pw = os.environ.get('PANEL_PASSWORD', '')
             if not pw:
@@ -1394,6 +1492,20 @@ class H(BaseHTTPRequestHandler):
         if p.startswith('/api/admin/'):
             if not self.session():
                 return self.send(401, {'ok': False, 'error': 'auth'})
+            m = re.match(r'^/api/admin/inquiries/(\d+)$', p)
+            if m:
+                st = d.get('status')
+                note = clean(d.get('staff_note'), 600) if 'staff_note' in d else None
+                if st is not None and st not in INQ_STATUSES:
+                    return self.send(400, {'ok': False})
+                with LOCK, db() as con:
+                    if not con.execute('SELECT 1 FROM inquiries WHERE id=?', (int(m.group(1)),)).fetchone():
+                        return self.send(404, {'ok': False})
+                    if st is not None:
+                        con.execute('UPDATE inquiries SET status=?, updated=? WHERE id=?', (st, now(), int(m.group(1))))
+                    if note is not None:
+                        con.execute('UPDATE inquiries SET staff_note=?, updated=? WHERE id=?', (note or None, now(), int(m.group(1))))
+                return self.send(200, {'ok': True})
             if p == '/api/admin/bookings/new':
                 f, t = parse_day(d.get('in')), parse_day(d.get('out'))
                 name, phone = clean(d.get('name'), 80), clean(d.get('phone'), 24)

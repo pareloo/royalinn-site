@@ -201,3 +201,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .note-box{background:#EEF5F6;border-inline-start:5px solid #1A5A74;border-radius:10px;padding:10px 14px;margin:0 0 14px;color:#24414e}
 .deposit{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;background:#fbf6ea;border:1px solid #e3cf9f;border-radius:10px;padding:10px 12px;margin:10px 0 0}.deposit label{display:grid;gap:2px;font-size:.86rem;max-width:150px}.deposit input{min-height:40px}
 textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid #cfd8dc;border-radius:8px}
+#inq-filter{margin:0 0 14px}#inq-filter .chip{border:0;cursor:pointer;background:#eceff1;color:#3c4a52}#inq-filter .chip.on{background:#0f3d52;color:#fff}
+#view-inq .row-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}
+#view-inq .pill{border-radius:99px;padding:3px 12px;font-size:.85rem;font-weight:700;background:#fff3d6;color:#7d5d24}
+#view-inq .pill.st-contacted{background:#e3eef6;color:#1a5a74}#view-inq .pill.st-won{background:#e1f2e8;color:#1b6240}#view-inq .pill.st-lost{background:#eceff1;color:#56646c}
+#view-inq .note-form{display:flex;gap:8px;margin-top:10px}#view-inq .note-form input{flex:1;min-width:0}
