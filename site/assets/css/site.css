@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=3da22fd7) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=3da22fd7) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=3da22fd7) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=051b2290) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=051b2290) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=051b2290) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -241,9 +241,11 @@ h1{font-size:1rem}
 .room .media img{transition:transform 1.1s cubic-bezier(.2,.7,.2,1)}
 .room:hover .media img{transform:scale(1.045)}
 .room-body{display:flex;flex-direction:column;flex:1;padding:18px 20px 20px}
+.room-body .room-meta{margin-bottom:16px}
+.price b:not(.ltr){font:600 1.05rem/1.3 inherit;font-family:inherit;color:var(--sea);margin:0}
 .room-meta{font-size:.9rem;line-height:1.55;color:var(--muted);margin-top:6px}
 .price{margin-top:auto;padding-top:16px;font-size:.9rem;color:var(--muted)}
-.room .price{border-top:1px solid var(--line);margin-top:16px;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.room .price{border-top:1px solid var(--line);margin-top:auto;display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .price b{font:var(--w-head) 1.75rem/1 "Cormorant Garamond","Iowan Old Style",Georgia,serif;font-weight:600;color:var(--sea);margin-inline:.15em}
 .room-go{display:inline-flex;align-items:center;gap:.4em;font-weight:600;color:var(--sea);font-size:.88rem;white-space:nowrap}
 
