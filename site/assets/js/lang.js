@@ -1,1 +1,1 @@
-(function(){var l='ar';try{var s=localStorage.getItem('ri-lang');if(s==='en'){l=s}}catch(e){}location.replace('/'+l+'/')})();
+(function(){var L=["ar", "en", "tr"],l='ar';try{var n=(navigator.language||'').slice(0,2).toLowerCase();l=n==='ar'?'ar':(L.indexOf(n)>0?n:'en');var s=localStorage.getItem('ri-lang');if(L.indexOf(s)>=0){l=s}}catch(e){}location.replace('/'+l+'/')})();
