@@ -529,8 +529,10 @@ def notify_telegram(b):
             f"🔔 طلب حجز جديد {b['ref']}", f"الاسم: {b['name']}", f"الهاتف: {b['phone']}",
             f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {b['guests']}",
             f"الغرفة: {room}", f"الفطور: {'نعم' if b['breakfast'] else 'لا'}",
-            f"المبلغ: ${b['total']}" if b.get('total') else 'المبلغ: عند الطلب', f"ملاحظة: {b['message'] or '-'}",
-            '', 'https://royalinntartus.com/panel/'])
+            f"المبلغ: ${b['total']}" if b.get('total') else 'المبلغ: عند الطلب', f"ملاحظة: {b['message'] or '-'}"])
+        # one tap forwards the same request to the hotel's WhatsApp (automatic WhatsApp to Syrian numbers is not possible)
+        fwd = text + '\n\nتأكيد أو رفض: ' + act_url(b['ref'])
+        text += '\n\n➡️ أرسل إلى واتساب الفندق:\n' + wa_link(os.environ.get('HOTEL_WA', '963998730730'), fwd) + '\n\nتأكيد أو رفض:\n' + act_url(b['ref'])
         data = urllib.parse.urlencode({'chat_id': chat, 'text': text, 'disable_web_page_preview': 'true'}).encode()
         urllib.request.urlopen(urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data), timeout=12).read()
     except Exception as e:  # never loses the request, never prints the token
