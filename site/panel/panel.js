@@ -353,9 +353,10 @@
       if (b.departed && b.phone && b.phone !== '-') {
         // after check-out: thank the guest and ask for a Google review (one tap, the staff press Send)
         var rv = 'https://search.google.com/local/writereview?placeid=ChIJGYQQvXl-IRURS1x8zFqxc1I';
+        var ta = 'https://www.tripadvisor.com/UserReviewEdit-g304152-d15360933';
         var tx = b.lang === 'en'
-          ? 'Hello ' + b.name + ', thank you for staying at Royal Inn Tartus. We hope you enjoyed your stay. If you have a minute, we would be grateful for your review on Google: ' + rv
-          : 'مرحباً ' + b.name + '، شكراً لإقامتكم في فندق رويال إن طرطوس، ونتمنى أن تكون إقامتكم قد نالت إعجابكم. يسعدنا جداً تقييمكم على Google، يستغرق دقيقة واحدة: ' + rv;
+          ? 'Hello ' + b.name + ', thank you for staying at Royal Inn Tartus. We hope you enjoyed your stay. If you have a minute, we would be grateful for your review on Google: ' + rv + ' and on Tripadvisor: ' + ta
+          : 'مرحباً ' + b.name + '، شكراً لإقامتكم في فندق رويال إن طرطوس، ونتمنى أن تكون إقامتكم قد نالت إعجابكم. يسعدنا جداً تقييمكم على Google، يستغرق دقيقة واحدة: ' + rv + ' \nوعلى Tripadvisor: ' + ta;
         var ra = el('a', 'btn wa', 'اطلب تقييماً (واتساب)'); ra.href = 'https://wa.me/' + digits(b.phone) + '?text=' + encodeURIComponent(tx); ra.target = '_blank'; ra.rel = 'noopener'; act.appendChild(ra);
       }
       if (!b.departed) { var eb = el('button', 'ghost', 'تمديد / تعديل المغادرة'); eb.type = 'button'; eb.addEventListener('click', function () { ext.hidden = !ext.hidden; }); act.appendChild(eb); }
