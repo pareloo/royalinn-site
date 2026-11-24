@@ -126,7 +126,7 @@
     items.forEach(function (b) {
       var r = el('div', 'mini');
       r.appendChild(el('b', null, b.name));
-      var sub = what === 'new' ? fmt(b.check_in) + ' ← ' + fmt(b.check_out) + ' · ' + b.room_name : b.room_name + ' · ' + b.nights + ' ليالٍ · ' + b.guests + ' ضيوف';
+      var sub = what === 'new' ? fmt(b.check_in) + ' ← ' + fmt(b.check_out) + ' · ' + b.room_name : b.room_name + ' · ' + b.nights + ' ليالٍ · ' + b.guests + ' ضيوف' + (b.rooms > 1 ? ' · ' + b.rooms + ' غرف' : '');
       if (b.status === 'new') sub += ' · لم يُؤكَّد بعد'; if (b.room_no) sub += ' · غرفة ' + b.room_no; if (b.agency_name) sub += ' · ' + b.agency_name;
       r.appendChild(el('span', 'm-sub', sub));
       if (b.phone) { var a = el('a', 'btn ghost', 'اتصال'); a.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); r.appendChild(a); }
@@ -285,7 +285,7 @@
     [['الوصول', b.check_in], ['المغادرة', b.check_out]].forEach(function (x) {
       var d = el('div', 'stay-d'); d.appendChild(el('span', null, x[0] + ' · ' + DAYS_LONG[day(x[1]).getDay()])); d.appendChild(el('b', null, fmt(x[1]))); stay.appendChild(d);
     });
-    stay.appendChild(el('span', 'stay-n', b.nights + ' ليالٍ · ' + b.guests + ' ضيوف'));
+    stay.appendChild(el('span', 'stay-n', b.nights + ' ليالٍ · ' + b.guests + ' ضيوف' + (b.rooms > 1 ? ' · ' + b.rooms + ' غرف' : '')));
     var tot = el('div', 'stay-t'); tot.appendChild(el('span', null, 'المبلغ الإجمالي')); tot.appendChild(el('b', null, b.total ? '$' + b.total : 'يُحدَّد'));
     if (b.paid != null && b.total) tot.appendChild(el('span', b.total - b.paid > 0 ? 'due' : 'paidok', b.total - b.paid > 0 ? 'مدفوع $' + b.paid + ' · الباقي $' + (b.total - b.paid) : 'مدفوع بالكامل'));
     stay.appendChild(tot);
@@ -356,8 +356,8 @@
       var wa = el('a', 'btn wa', 'واتساب للزبون'); wa.target = '_blank'; wa.rel = 'noopener';
       var room = b.room_name === 'أي غرفة' ? '' : ' (' + b.room_name + ')';
       var text = b.lang === 'en'
-        ? 'Hello ' + b.name + ', this is Royal Inn Tartus about your booking request ' + b.ref + ': ' + b.check_in + ' to ' + b.check_out + ', ' + b.guests + ' guests' + (b.total ? ', total $' + b.total : '') + '.'
-        : 'مرحباً ' + b.name + '، معك فندق رويال إن طرطوس بخصوص طلب الحجز ' + b.ref + ': من ' + fmt(b.check_in) + ' إلى ' + fmt(b.check_out) + '، ' + b.guests + ' ضيوف' + room + (b.total ? '، المبلغ الإجمالي ' + b.total + '$' : '') + '.';
+        ? 'Hello ' + b.name + ', this is Royal Inn Tartus about your booking request ' + b.ref + ': ' + b.check_in + ' to ' + b.check_out + ', ' + b.guests + ' guests' + (b.rooms > 1 ? ' in ' + b.rooms + ' rooms' : '') + (b.total ? ', total $' + b.total : '') + '.'
+        : 'مرحباً ' + b.name + '، معك فندق رويال إن طرطوس بخصوص طلب الحجز ' + b.ref + ': من ' + fmt(b.check_in) + ' إلى ' + fmt(b.check_out) + '، ' + b.guests + ' ضيوف' + (b.rooms > 1 ? ' في ' + b.rooms + ' غرف' : '') + room + (b.total ? '، المبلغ الإجمالي ' + b.total + '$' : '') + '.';
       wa.href = 'https://wa.me/' + digits(b.phone) + '?text=' + encodeURIComponent(text);
       act.appendChild(wa);
       var tel = el('a', 'btn ghost', 'اتصال'); tel.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); act.appendChild(tel);

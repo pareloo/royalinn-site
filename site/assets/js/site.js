@@ -45,11 +45,26 @@
       var a = ci.value.split('-'), b = co.value.split('-');
       return Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 864e5);
     }
+    function cap() {
+      var o = room.value ? room.options[room.selectedIndex] : null;
+      return (o && +o.getAttribute('data-max')) || 2;          // 'any room' is counted in rooms for two
+    }
+    function roomsNeeded() { return Math.max(1, Math.ceil(+guests.value / cap())); }
     function rate() {
       var o = room.value ? room.options[room.selectedIndex] : null;
       if (!o) { return 0; }
       var p1 = +o.getAttribute('data-price') || 0, p2 = +o.getAttribute('data-price2') || 0;
-      return (p2 && +guests.value >= 2) ? p2 : p1;
+      if (!p1) { return 0; }
+      var g = +guests.value, n = roomsNeeded(), sum = 0;
+      for (var i = 0; i < n; i++) {                              // guests spread evenly: 5 in rooms for two -> 2, 2, 1
+        var k = Math.floor(g / n) + (i < g % n ? 1 : 0);
+        sum += (p2 && k >= 2) ? p2 : p1;
+      }
+      return sum;
+    }
+    function partyLine(n) {
+      var r = roomsNeeded();
+      return L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value + (r > 1 ? ' · ' + L.lrooms + ': ' + r : '');
     }
     function text(ref) {
       var lines = [L.hello], n = nights();
@@ -59,13 +74,14 @@
       if (co.value) { lines.push(L.lout + ': ' + co.value); }
       if (n > 0) { lines.push(L.lnights + ': ' + n); }
       lines.push(L.lguests + ': ' + guests.value);
+      if (roomsNeeded() > 1) { lines.push(L.lrooms + ': ' + roomsNeeded()); }
       if (room.value) { lines.push(L.lroom + ': ' + room.options[room.selectedIndex].text); }
       if (f('breakfast').checked) { lines.push(L.lbf + ': ' + L.yes); }
       if (f('message').value.trim()) { lines.push(f('message').value.trim()); }
       return lines.join('\n');
     }
     function waUrl(ref) { return 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text(ref)); }
-    function money(n) { return '$' + n; }
+    function money(n) { return '\u2066$' + n + '\u2069'; }   // keeps '$580' whole inside Arabic text
     function checkAvail() {
       var n = nights(), key = ci.value + '|' + co.value + '|' + room.value + '|' + guests.value;
       if (!api || n <= 0 || !window.fetch) { avail.hidden = true; lastCheck = ''; return; }
@@ -79,7 +95,7 @@
           var ok = room.value ? (j.rooms[0] && j.rooms[0].available) : j.open;
           var head = d.createElement('b'); head.textContent = ok ? L.availYes : L.availNo; avail.appendChild(head);
           if (room.value && j.rooms[0]) {
-            var tot = j.rooms[0].total, line = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value;
+            var tot = j.rooms[0].total, line = partyLine(n);
             var r0 = j.rooms[0], deal = r0.base_total ? ' (' + L.ofOff.replace('{p}', r0.offer_percent) + ' · ' + L.ofWas.replace('{p}', money(r0.base_total)) + ')' : '';
             sum.textContent = tot ? line + ' · ' + L.est.replace('{p}', money(tot)) + deal : line + ' · ' + L.ask; sum.hidden = false;
           }
@@ -93,7 +109,7 @@
               list.forEach(function (r) {
                 var li = d.createElement('li'), bt = d.createElement('button');
                 bt.type = 'button'; bt.setAttribute('data-pick', r.id);
-                var nm = d.createElement('span'), op = room.querySelector('option[value="' + r.id + '"]'); nm.textContent = op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en);
+                var nm = d.createElement('span'), op = room.querySelector('option[value="' + r.id + '"]'); nm.textContent = (op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en)) + (r.rooms > 1 ? ' × ' + r.rooms : '');
                 var pr = d.createElement('b');
                 if (r.total && r.base_total) { var was = d.createElement('s'); was.textContent = money(r.base_total); pr.appendChild(was); pr.appendChild(d.createTextNode(' ' + money(r.total))); }
                 else { pr.textContent = r.total ? money(r.total) : L.ask; }
@@ -109,13 +125,12 @@
       var bt = e.target.closest && e.target.closest('[data-pick]');
       if (bt) { room.value = bt.getAttribute('data-pick'); update(); }
     });
-    function capGuests() {
-      var op = room.options[room.selectedIndex], max = op && op.getAttribute('data-max') ? +op.getAttribute('data-max') : guests.options.length;
-      for (var i = 0; i < guests.options.length; i++) { guests.options[i].disabled = +guests.options[i].value > max; }
-      if (+guests.value > max) { guests.value = String(max); }
-    }
-    room.addEventListener('change', capGuests); capGuests();
+    var note = d.createElement('p'); note.className = 'book-note'; note.hidden = true; note.textContent = L.roomsnote;
+    var rl = room.closest('label'); rl.parentNode.insertBefore(note, rl.nextSibling);
+    function showNote() { note.hidden = roomsNeeded() < 2; }
+    showNote();
     function update() {
+      showNote();
       if (ci.value) {
         var p = ci.value.split('-'), nx = new Date(+p[0], +p[1] - 1, +p[2] + 1);
         co.min = iso(nx);
@@ -125,8 +140,8 @@
       if (mail) { mail.href = 'mailto:' + L.mail + '?subject=' + encodeURIComponent(L.subject) + '&body=' + encodeURIComponent(text()); }
       var n = nights();
       if (n > 0) {
-        var line = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value, pr = rate();
-        if (pr) { line += ' · ' + L.est.replace('{p}', '$' + pr * n); }
+        var line = partyLine(n), pr = rate();
+        if (pr) { line += ' · ' + L.est.replace('{p}', money(pr * n)); }
         sum.textContent = line; sum.hidden = false;
       } else { sum.hidden = true; }
       checkAvail();

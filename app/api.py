@@ -46,8 +46,31 @@ MAX_GUESTS = {'standard': 2, 'triple': 3, 'junior-suite': 2, 'royal-suite': 4}
 MAX_ANY = max(MAX_GUESTS.values())
 
 
+MAX_PARTY = 12   # larger parties use the groups request form
+
+
 def too_many(room, guests):
-    return guests > (MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY)
+    """No extra beds: a bigger party gets more rooms, so only the party size itself is limited."""
+    return guests > MAX_PARTY
+
+
+def rooms_needed(room, guests):
+    """Rooms of this type for the party: every room holds at most MAX_GUESTS (no extra beds).
+    'Any room' is counted in Standard rooms (two guests each); the hotel can change it in the panel."""
+    cap = MAX_GUESTS.get(room, MAX_GUESTS['standard']) if room else MAX_GUESTS['standard']
+    return max(1, -(-int(guests) // cap))
+
+
+def party_ar(b):
+    """'5' or '5 · عدد الغرف: 3' for staff messages."""
+    n = (b['rooms'] if 'rooms' in b.keys() else None) or 1
+    return '%s · عدد الغرف: %s' % (b['guests'], n) if n > 1 else str(b['guests'])
+
+
+def split(room, guests):
+    """Guests in each room, filled evenly: 5 in Standard rooms -> [2, 2, 1]."""
+    n = rooms_needed(room, guests)
+    return [guests // n + (1 if i < guests % n else 0) for i in range(n)]
 NAMES = dict(ROOMS, **{'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', 'جناح رويال بغرفتَي نوم'),
                        CONNECT: ('Connecting room (Royal Suite)', 'غرفة متصلة بجناح رويال')})
 STATUSES = ('new', 'confirmed', 'cancelled')
@@ -105,7 +128,7 @@ def init():
         cols = [r[1] for r in con.execute('PRAGMA table_info(bookings)')]
         for c, t in (('total', 'INTEGER'), ('source', 'TEXT'), ('room_no', 'TEXT'), ('paid', 'INTEGER'), ('arrived', 'TEXT'), ('departed', 'TEXT'),
                      ('agency_id', 'INTEGER'), ('pay_by', 'TEXT'), ('referrer', 'TEXT'), ('net', 'INTEGER'),
-                     ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER')):
+                     ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER'), ('rooms', 'INTEGER')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
         for k, (a, b) in DEFAULT_PRICES.items():
@@ -149,7 +172,7 @@ def check_dates(cin, cout):
     return (a, b), None
 
 
-def availability(con, a, b, room, skip=None):
+def availability(con, a, b, room, skip=None, need=1):
     """True / False. A night is unavailable if the hotel closed it, or (when a room count is set) all rooms of that type are confirmed."""
     nights = [a + dt.timedelta(days=i) for i in range((b - a).days)]
     rows = con.execute('SELECT room, date_from, date_to FROM closures WHERE date_from < ? AND date_to >= ?', (b.isoformat(), a.isoformat())).fetchall()
@@ -164,17 +187,25 @@ def availability(con, a, b, room, skip=None):
     if room:
         inv = con.execute('SELECT count FROM inventory WHERE room=?', (room,)).fetchone()
         if inv is not None:
-            booked = con.execute("SELECT check_in, check_out FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ? AND ref != ?",
+            booked = con.execute("SELECT check_in, check_out, rooms FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ? AND ref != ?",
                                  (room, b.isoformat(), a.isoformat(), skip or '')).fetchall()
             for n in nights:
-                used = sum(1 for x in booked if dt.date.fromisoformat(x['check_in']) <= n < dt.date.fromisoformat(x['check_out']))
-                if used >= inv['count']:
+                used = sum((x['rooms'] or 1) for x in booked if dt.date.fromisoformat(x['check_in']) <= n < dt.date.fromisoformat(x['check_out']))
+                if used + need > inv['count']:
                     return False
     return True
 
 
 def nightly(con, room, guests, nights):
-    """Price for each night. The Royal Suite adds its connecting room at the Standard rate (single rate, double rate from 4 guests)."""
+    """Price for each night for the whole party, over as many rooms of this type as it needs."""
+    if room and room in MAX_GUESTS and guests > MAX_GUESTS[room]:
+        parts = [_one_room(con, room, g, nights) for g in split(room, guests)]
+        return [None if any(p[i] is None for p in parts) else sum(p[i] for p in parts) for i in range(len(nights))]
+    return _one_room(con, room, guests, nights)
+
+
+def _one_room(con, room, guests, nights):
+    """Price for each night of one room. The Royal Suite adds its connecting room at the Standard rate (single rate, double rate from 4 guests)."""
     if room == 'royal-suite':
         a = _nightly(con, room, min(guests, 2), nights); b = _nightly(con, 'standard', 2 if guests >= 4 else 1, nights)
         return [None if (x is None or y is None) else x + y for x, y in zip(a, b)]
@@ -224,9 +255,9 @@ def left(con, room, nights):
     if inv is None:
         return None
     a, b = nights[0], nights[-1] + dt.timedelta(days=1)
-    booked = con.execute("SELECT check_in, check_out FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ?",
+    booked = con.execute("SELECT check_in, check_out, rooms FROM bookings WHERE status='confirmed' AND room=? AND check_in < ? AND check_out > ?",
                          (room, b.isoformat(), a.isoformat())).fetchall()
-    used = max(sum(1 for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
+    used = max(sum((x['rooms'] or 1) for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
     return max(inv['count'] - used, 0)
 
 
@@ -236,13 +267,12 @@ def quote(con, a, b, guests, room=None):
     for k, names in ROOMS.items():
         if room and k != room:
             continue
-        if not room and guests > MAX_GUESTS.get(k, MAX_ANY):
-            continue           # this room type cannot take that many guests
+        need = rooms_needed(k, guests)
         base = nightly(con, k, guests, nights)
         per, pct = discounted(con, base, nights)
         total = None if any(x is None for x in per) else sum(per)
         base_total = None if any(x is None for x in base) else sum(base)
-        out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k),
+        out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k, need=need), 'rooms': need,
                     'left': left(con, k, nights), 'total': total, 'nightly': per,
                     'base_total': base_total if pct and base_total != total else None, 'offer_percent': pct if base_total != total else None})
     return out
@@ -427,7 +457,7 @@ def notify_email(b):
             S = settings(con)
         room = NAMES.get(b['room'] or '', ('-', 'أي غرفة'))[1]
         rows = [('رقم الطلب', b['ref']), ('الاسم', b['name']), ('الهاتف', '\u2066%s\u2069' % b['phone']), ('البريد', b.get('email')),
-                ('الوصول', _fd(b['check_in'])), ('المغادرة', '%s (%s ليالٍ)' % (_fd(b['check_out']), b['nights'])), ('الضيوف', b['guests']),
+                ('الوصول', _fd(b['check_in'])), ('المغادرة', '%s (%s ليالٍ)' % (_fd(b['check_out']), b['nights'])), ('الضيوف', party_ar(b)),
                 ('نوع الغرفة', room), ('الفطور', 'نعم' if b['breakfast'] else 'لا'), ('المبلغ الإجمالي', ('%s$' % b['total']) if b.get('total') else 'يُحدَّد من الفندق'),
                 ('ملاحظة الضيف', b.get('message')), ('لغة الضيف', 'English' if b.get('lang') == 'en' else 'العربية')]
         act = act_url(b['ref']); dep = wa_link(b['phone'], deposit_text(b, S))
@@ -457,7 +487,7 @@ def act_page(r, done=None, S=None):
         return head + '<main class="sheet">' + doc_band('الرابط غير صحيح') + '</main></body></html>'
     room = NAMES.get(r['room'] or '', ('-', 'أي غرفة'))[1]
     rows = [('رقم الطلب', '<b dir="ltr">%s</b>' % e(r['ref'])), ('الاسم', e(r['name'])), ('الهاتف', '<span dir="ltr">%s</span>' % e(r['phone'])),
-            ('التواريخ', '<span dir="ltr">%s – %s</span> (%s ليالٍ)' % (_fd(r['check_in']), _fd(r['check_out']), r['nights'])), ('الضيوف', r['guests']), ('الغرفة', e(room)),
+            ('التواريخ', '<span dir="ltr">%s – %s</span> (%s ليالٍ)' % (_fd(r['check_in']), _fd(r['check_out']), r['nights'])), ('الضيوف', party_ar(r)), ('الغرفة', e(room)),
             ('المبلغ', ('%s$' % r['total']) if r['total'] else 'يُحدَّد من الفندق')]
     st = {'new': 'جديد، ينتظر الرد', 'confirmed': 'مؤكَّد', 'cancelled': 'ملغى'}[r['status']]
     tbl = '<section class="sec"><h2>تفاصيل الطلب <i>%s</i></h2><table class="lt">%s</table></section>' % (e(st), ''.join('<tr><th>%s</th><td>%s</td></tr>' % (k, v) for k, v in rows))
@@ -549,7 +579,7 @@ def _mail_rows(b, S, en):
          if en else ('رقم الحجز', 'الوصول', 'المغادرة', 'الليالي', 'الضيوف', 'الغرفة', 'الفطور', 'المبلغ الإجمالي', 'من الساعة', 'حتى الساعة', 'مشمول', 'غير مشمول', 'شامل الضريبة'))
     agency_pays = b.get('agency_id') and b.get('pay_by') == 'agency'
     return [(L[0], b['ref']), (L[1], '%s (%s %s)' % (_fd(b['check_in']), L[8], S['checkin'])), (L[2], '%s (%s %s)' % (_fd(b['check_out']), L[9], S['checkout'])),
-            (L[3], b['nights']), (L[4], b['guests']), (L[5], room), (L[6], L[10] if b['breakfast'] else L[11]),
+            (L[3], b['nights']), (L[4], b['guests']), (L[5], (room + ((' × %s' % b['rooms']) if (b.get('rooms') or 1) > 1 else '')) if room else room), (L[6], L[10] if b['breakfast'] else L[11]),
             (L[7], ('$%s (%s)' % (b['total'], L[12])) if (b.get('total') and not agency_pays) else None)]
 
 
@@ -596,7 +626,7 @@ def notify_telegram(b):
         room = NAMES.get(b['room'] or '', ('-', 'أي غرفة'))[1]
         text = '\n'.join([
             f"🔔 طلب حجز جديد {b['ref']}", f"الاسم: {b['name']}", f"الهاتف: {b['phone']}",
-            f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {b['guests']}",
+            f"الوصول: {b['check_in']}", f"المغادرة: {b['check_out']} ({b['nights']} ليالٍ)", f"الضيوف: {party_ar(b)}",
             f"الغرفة: {room}", f"الفطور: {'نعم' if b['breakfast'] else 'لا'}",
             f"المبلغ: ${b['total']}" if b.get('total') else 'المبلغ: عند الطلب', f"ملاحظة: {b['message'] or '-'}"])
         # one tap forwards the same request to the hotel's WhatsApp (automatic WhatsApp to Syrian numbers is not possible)
@@ -993,7 +1023,7 @@ def letter_html(r, S=None):
     tile = lambda k, big, small, cls='': '<div class="tile %s"><span class="tl">%s</span><b dir="auto">%s</b><span class="ts">%s</span></div>' % (cls, lab(k), big, small)
     strip = ('<div class="strip">' + tile('cin', _fd(r['check_in']), '%s · %s' % (e(wd(r['check_in'])), e(L['from14'])))
              + tile('cout', _fd(r['check_out']), '%s · %s' % (e(wd(r['check_out'])), e(L['until12'])))
-             + tile('nights', r['nights'], '%s: %s' % (e(LBL['guests'][i]), r['guests']), 'num') + tile('room', e(room), ('%s: %s' % (e(LBL['room_no'][i]), e(g('room_no')))) if g('room_no') else e(L['yes'] if r['breakfast'] else L['no']), 'wide') + '</div>')
+             + tile('nights', r['nights'], '%s: %s' % (e(LBL['guests'][i]), r['guests']), 'num') + tile('room', e(room) + ((' × %s' % r['rooms']) if ('rooms' in r.keys() and (r['rooms'] or 1) > 1) else ''), ('%s: %s' % (e(LBL['room_no'][i]), e(g('room_no')))) if g('room_no') else e(L['yes'] if r['breakfast'] else L['no']), 'wide') + '</div>')
     res = [('to', '<b>%s</b>' % e(r['name']))]
     if r['phone'] and r['phone'] != '-':
         res.append(('phone', '<span dir="ltr">%s</span>' % e(r['phone'])))
@@ -1443,7 +1473,8 @@ class H(BaseHTTPRequestHandler):
                 ref = new_ref()
                 while con.execute('SELECT 1 FROM bookings WHERE ref=?', (ref,)).fetchone():
                     ref = new_ref()
-                avail = availability(con, a, b, v['room'])
+                need = rooms_needed(v['room'], v['guests'])
+                avail = availability(con, a, b, v['room'], need=need)
                 total = None
                 if v['room']:
                     _n = [a + dt.timedelta(days=i) for i in range((b - a).days)]
@@ -1452,12 +1483,12 @@ class H(BaseHTTPRequestHandler):
                     if total is not None and v['breakfast']:
                         total += BREAKFAST * v['guests'] * len(per)
                 rec = dict(total=total, source='web', ref=ref, created=now(), lang=v['lang'], status='new', check_in=a.isoformat(), check_out=b.isoformat(),
-                           nights=(b - a).days, guests=v['guests'], room=v['room'], breakfast=v['breakfast'], name=v['name'],
+                           nights=(b - a).days, guests=v['guests'], rooms=need, room=v['room'], breakfast=v['breakfast'], name=v['name'],
                            phone=v['phone'], email=v['email'], message=v['message'])
-                con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source) '
-                            'VALUES(:ref,:created,:lang,:status,:check_in,:check_out,:nights,:guests,:room,:breakfast,:name,:phone,:email,:message,:total,:source)', rec)
+                con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,rooms,room,breakfast,name,phone,email,message,total,source) '
+                            'VALUES(:ref,:created,:lang,:status,:check_in,:check_out,:nights,:guests,:rooms,:room,:breakfast,:name,:phone,:email,:message,:total,:source)', rec)
             threading.Thread(target=notify, args=(rec,), daemon=True).start()
-            return self.send(200, {'ok': True, 'ref': ref, 'available': avail, 'total': total})
+            return self.send(200, {'ok': True, 'ref': ref, 'available': avail, 'total': total, 'rooms': need})
 
         if p == '/api/inquiry':
             if d.get('website'):                     # hidden field, filled only by bots
@@ -1537,9 +1568,9 @@ class H(BaseHTTPRequestHandler):
                     if aid and not con.execute('SELECT 1 FROM agencies WHERE id=?', (aid,)).fetchone():
                         aid = None
                     pay_by = 'agency' if (aid and d.get('pay_by') == 'agency') else 'guest'
-                    con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,room,breakfast,name,phone,email,message,total,source,staff_note,updated,agency_id,pay_by,referrer,net) '
-                                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                                (ref, now(), 'en' if d.get('lang') == 'en' else 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, room,
+                    con.execute('INSERT INTO bookings(ref,created,lang,status,check_in,check_out,nights,guests,rooms,room,breakfast,name,phone,email,message,total,source,staff_note,updated,agency_id,pay_by,referrer,net) '
+                                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (ref, now(), 'en' if d.get('lang') == 'en' else 'ar', 'confirmed', f.isoformat(), t.isoformat(), (t - f).days, guests, rooms_needed(room, guests), room,
                                  1 if d.get('breakfast') else 0, name, phone or '-', email, clean(d.get('message'), 600) or None, total, src,
                                  clean(d.get('note'), 400) or None, now(), aid, pay_by, clean(d.get('referrer'), 80) or None, net_of(con, total, aid)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (ref,)).fetchone(); S = settings(con)
@@ -1646,7 +1677,7 @@ class H(BaseHTTPRequestHandler):
                     stay_changed = (f.isoformat(), t.isoformat(), room, guests, bf) != (cur['check_in'], cur['check_out'], cur['room'], cur['guests'], cur['breakfast'])
                     free = True
                     if stay_changed and cur['status'] == 'confirmed':
-                        free = availability(con, f, t, room, cur['ref'])
+                        free = availability(con, f, t, room, cur['ref'], need=rooms_needed(room, guests))
                     try:
                         total = int(d['total']) if d.get('total') not in (None, '') else None
                     except (TypeError, ValueError):
@@ -1668,8 +1699,8 @@ class H(BaseHTTPRequestHandler):
                     room_no = cur['room_no']
                     if room_no and stay_changed and unit_busy(con, room_no, f.isoformat(), t.isoformat(), cur['ref']):
                         room_no = None        # the numbered room is taken on the new dates; the desk picks another
-                    con.execute('UPDATE bookings SET name=?, phone=?, email=?, check_in=?, check_out=?, nights=?, guests=?, room=?, breakfast=?, total=?, net=?, room_no=?, updated=? WHERE ref=?',
-                                (name, phone, email, f.isoformat(), t.isoformat(), (t - f).days, guests, room, bf, total, net_of(con, total, cur['agency_id']), room_no, now(), m.group(1)))
+                    con.execute('UPDATE bookings SET name=?, phone=?, email=?, check_in=?, check_out=?, nights=?, guests=?, rooms=?, room=?, breakfast=?, total=?, net=?, room_no=?, updated=? WHERE ref=?',
+                                (name, phone, email, f.isoformat(), t.isoformat(), (t - f).days, guests, rooms_needed(room, guests), room, bf, total, net_of(con, total, cur['agency_id']), room_no, now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
                 return self.send(200, dict(res, item=row(r), room_no_cleared=bool(cur['room_no'] and not room_no)))
             m = re.fullmatch(r'/api/admin/agencies/(\d+)/payment', p)
