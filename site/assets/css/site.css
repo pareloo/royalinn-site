@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=e0d2a2f4) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=e0d2a2f4) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=e0d2a2f4) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=8ad53a92) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=8ad53a92) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=8ad53a92) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -330,13 +330,27 @@ h1{font-size:1rem}
 .phead .lead{margin-inline:auto}
 .rm{display:grid;gap:26px;align-items:center;padding-block:clamp(36px,6vw,72px);border-bottom:1px solid var(--line)}
 .rm:last-of-type{border-bottom:0}
-.rm-media{display:grid;grid-template-columns:1.45fr 1fr;gap:12px;align-items:end}
+.rm-gal{position:relative;min-width:0}
+.rm-media{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-inline:calc(-1*var(--pad));padding-inline:var(--pad);scroll-padding-inline:var(--pad);overscroll-behavior-x:contain}
+.rm-media::-webkit-scrollbar{display:none}
+.rm-media>.media{flex:0 0 86%;scroll-snap-align:start;border-radius:var(--r)}
+.rm-media>.media img{width:100%;height:100%;object-fit:cover}
+.rm-n{position:absolute;top:12px;left:12px;display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;background:rgba(15,40,55,.62);color:#fff;font-size:.8rem;line-height:1;direction:ltr;backdrop-filter:blur(4px);pointer-events:none}
+.rm-n .ico{width:15px;height:15px}
+[dir=rtl] .rm-n{left:auto;right:12px}
+.field input[type=date]{min-width:0;text-align:start}.field input[type=date]::-webkit-date-and-time-value{text-align:start}
+.rm-txt{min-width:0}
+.rm .spec li{overflow-wrap:anywhere}
 .rm-txt h2{font-size:calc(clamp(1.9rem,1.3rem + 2.4vw,2.7rem)*var(--h-scale))}
 .rm-txt>p{margin-top:12px;max-width:34rem}
 .spec{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:18px}
 .spec li{display:inline-flex;align-items:center;gap:.5em;padding:7px 14px;border-radius:2px;background:var(--foam);font-size:.88rem;font-weight:500;color:var(--sea)}
 .rm .price{margin-top:22px;padding-top:0}
-@media (min-width:900px){.rm{grid-template-columns:1.1fr 1fr;gap:clamp(40px,6vw,84px)}.rm:nth-of-type(even) .rm-media{order:2}}
+@media (min-width:900px){.rm{grid-template-columns:1.1fr 1fr;gap:clamp(40px,6vw,84px)}.rm:nth-of-type(even) .rm-gal{order:2}
+.rm-media{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;overflow:visible;margin:0;padding:0}
+.rm-media>.media{aspect-ratio:1}.rm-media>.media:first-child{grid-column:1/-1;aspect-ratio:5/4}.rm-media>.media:nth-child(n+6){display:none}
+.rm-n{display:none}}
+@media (min-width:600px) and (max-width:899px){.rm-media>.media{flex-basis:58%}}
 .ticks{display:grid;grid-template-columns:repeat(2,1fr);gap:12px 20px}
 .ticks li{display:flex;align-items:flex-start;gap:.6em;line-height:1.5}
 .ticks .ico{color:var(--gold-ink);margin-top:.15em}

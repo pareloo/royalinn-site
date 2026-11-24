@@ -428,3 +428,22 @@
 
   window.RoyalInn = { scan: function () { scan(); onScroll(); } };
 })();
+
+/* room photo sliders: live "n / total" counter */
+(function () {
+  var els = document.querySelectorAll('[data-slides]');
+  for (var i = 0; i < els.length; i++) {
+    (function (tr) {
+      var n = tr.parentNode.querySelector('.rm-n b'); if (!n) { return; }
+      var tick = 0;
+      tr.addEventListener('scroll', function () {
+        if (tick) { return; }
+        tick = requestAnimationFrame(function () {
+          tick = 0;
+          var w = tr.children[0] ? tr.children[0].getBoundingClientRect().width + 10 : 1;
+          n.textContent = Math.min(tr.children.length, Math.round(Math.abs(tr.scrollLeft) / w) + 1);
+        });
+      }, { passive: true });
+    })(els[i]);
+  }
+})();
