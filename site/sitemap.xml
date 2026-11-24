@@ -121,6 +121,30 @@
     <xhtml:link rel="alternate" hreflang="x-default" href="https://royalinntartus.com/ar/guide"/>
   </url>
   <url>
+    <loc>https://royalinntartus.com/ar/our-story</loc>
+    <lastmod>2026-11-19</lastmod>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://royalinntartus.com/ar/our-story"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://royalinntartus.com/en/our-story"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://royalinntartus.com/tr/our-story"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://royalinntartus.com/ar/our-story"/>
+  </url>
+  <url>
+    <loc>https://royalinntartus.com/en/our-story</loc>
+    <lastmod>2026-11-19</lastmod>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://royalinntartus.com/ar/our-story"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://royalinntartus.com/en/our-story"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://royalinntartus.com/tr/our-story"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://royalinntartus.com/ar/our-story"/>
+  </url>
+  <url>
+    <loc>https://royalinntartus.com/tr/our-story</loc>
+    <lastmod>2026-11-19</lastmod>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://royalinntartus.com/ar/our-story"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://royalinntartus.com/en/our-story"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://royalinntartus.com/tr/our-story"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://royalinntartus.com/ar/our-story"/>
+  </url>
+  <url>
     <loc>https://royalinntartus.com/ar/tartus-seafront-hotel</loc>
     <lastmod>2026-11-19</lastmod>
     <xhtml:link rel="alternate" hreflang="ar" href="https://royalinntartus.com/ar/tartus-seafront-hotel"/>
