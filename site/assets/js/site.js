@@ -4,7 +4,7 @@
   var d = document, root = d.documentElement;
   root.classList.add('js');
   var conn = navigator.connection || {};
-  var lite = !!conn.saveData || /(^|-)2g$/.test(conn.effectiveType || '');
+  var lite = !!conn.saveData || /(^|-)[23]g$/.test(conn.effectiveType || '');
   var calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   var auto = !lite && !calm;
 
