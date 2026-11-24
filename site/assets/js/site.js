@@ -202,11 +202,17 @@
     fetch(api + 'prices', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j.ok) { return; }
       Array.prototype.forEach.call(tags, function (t) {
-        var p = j.rooms[t.getAttribute('data-rp')]; if (!p) { return; }
+        var id = t.getAttribute('data-rp'), p = j.rooms[id]; if (!p) { return; }
+        var p1 = p.price, p2 = p.price2, sd = j.rooms.standard;
+        if (id === 'royal-suite' && p1 != null) {                 // sold with its connecting room, charged at the Standard rate
+          if (!sd || sd.price == null) { p1 = null; } else { p1 += sd.price; p2 = null; }
+        }
         t.textContent = '';
-        if (p.price == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
-        var b = d.createElement('b'); b.className = 'ltr'; b.textContent = '$' + p.price;
-        t.appendChild(d.createTextNode(t.getAttribute('data-frm') + ' ')); t.appendChild(b); t.appendChild(d.createTextNode(' ' + t.getAttribute('data-per')));
+        if (p1 == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
+        var b = d.createElement('b'); b.className = 'ltr'; b.textContent = '$' + p1;
+        if (t.hasAttribute('data-two') && p2) { b.textContent += ' / $' + p2; }
+        var frm = t.getAttribute('data-frm'), per = t.getAttribute('data-per');
+        if (frm) { t.appendChild(d.createTextNode(frm + ' ')); } t.appendChild(b); if (per) { t.appendChild(d.createTextNode(' ' + per)); }
       });
     }).catch(function () {});
   })();
