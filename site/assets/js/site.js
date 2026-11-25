@@ -70,7 +70,12 @@
       var r = roomsNeeded();
       return base + (r > 1 ? ' · ' + L.lrooms + ': ' + r : '');
     }
-    function dropCombo() { combo = ''; comboName = ''; comboPrice = ''; }
+    function arDigits(v) { return v.replace(/[٠-٩]/g, function (c) { return c.charCodeAt(0) - 1632; }).replace(/[۰-۹]/g, function (c) { return c.charCodeAt(0) - 1776; }); }
+    function dropCombo() {
+      var had = combo; combo = ''; comboName = ''; comboPrice = '';
+      if (had && nights() > 0) { sum.textContent = partyLine(nights()); wa.href = waUrl(); }   // the summary and WhatsApp text never keep a choice that is gone
+    }
+    var lastOk = null;
     function text(ref) {
       var lines = [L.hello], n = nights();
       if (ref) { lines.push(L.lref + ': ' + ref); }
@@ -148,15 +153,19 @@
     }
     function checkAvail() {
       var n = nights(), key = ci.value + '|' + co.value + '|' + room.value + '|' + guests.value;
-      if (!api || n <= 0 || !window.fetch) { avail.hidden = true; lastCheck = ''; return; }
+      if (!api || n <= 0 || !window.fetch) { avail.hidden = true; lastCheck = ''; lastOk = null; return; }
       if (key === lastCheck) { return; }
-      lastCheck = key;
+      lastCheck = key; lastOk = null;
       fetch(api + 'quote?in=' + ci.value + '&out=' + co.value + '&guests=' + guests.value + '&room=' + encodeURIComponent(room.value), { credentials: 'omit' })
         .then(function (r) { return r.json(); })
         .then(function (j) {
-          if (key !== lastCheck || !j.ok) { return; }
+          if (key !== lastCheck) { return; }
           avail.textContent = '';
+          if (!j.ok) {        // too long a stay or too far ahead: say so instead of keeping the last answer
+            dropCombo(); lastOk = false; var eb = d.createElement('b'); eb.textContent = L.errRange; avail.appendChild(eb); avail.hidden = false; return;
+          }
           var ok = room.value ? (j.rooms[0] && j.rooms[0].available) : j.open;
+          lastOk = !!ok;
           if (room.value || !ok) { dropCombo(); }
           var head = d.createElement('b'); head.textContent = ok ? L.availYes : L.availNo; avail.appendChild(head);
           if (room.value && j.rooms[0]) {
@@ -290,6 +299,7 @@
     function pastDate() { return ci.value && ci.value < iso(new Date()); }
     next.addEventListener('click', function () {
       if (nights() <= 0 || pastDate()) { fail(L.errDates, ['dates']); return; }
+      if (lastOk === false) { fail(avail.textContent || L.availNo, ['dates']); return; }
       err.hidden = true; clearBad();
       more.hidden = false; next.hidden = true; f('name').focus();
     });
@@ -298,14 +308,15 @@
       if (sending) { return; }
       var bad = [];
       if (nights() <= 0 || pastDate()) { bad.push('dates'); }
+      if (lastOk === false && !bad.length) { fail(avail.textContent || L.availNo, ['dates']); return; }
       if (f('name').value.trim().length < 2) { bad.push('name'); }
-      if (f('phone').value.replace(/\D/g, '').length < 7) { bad.push('phone'); }
+      if (arDigits(f('phone').value).replace(/\D/g, '').length < 7) { bad.push('phone'); }
       if (f('email').value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f('email').value)) { bad.push('email'); }
       if (bad.length) { fail(bad[0] === 'dates' ? L.errDates : L.errFields, bad); return; }
       if (!api || !window.fetch) { window.open(waUrl(), '_blank', 'noopener'); return; }
       sending = true; send.disabled = true; err.hidden = true;
       var body = { lang: L.lang, 'in': ci.value, out: co.value, guests: +guests.value, room: room.value, combo: (!room.value && combo) ? combo : undefined, name: f('name').value.trim(),
-                   phone: f('phone').value.trim(), email: f('email').value.trim(), message: f('message').value.trim(),
+                   phone: arDigits(f('phone').value).trim(), email: f('email').value.trim(), message: f('message').value.trim(),
                    breakfast: f('breakfast').checked, website: f('website').value };
       fetch(api + 'booking', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         .then(function (r) { return r.json().then(function (j) { j.code = r.status; return j; }); })
@@ -510,7 +521,7 @@
     f.addEventListener('submit', function (ev) {
       ev.preventDefault();
       if (busy) { return; }
-      var ref = f.ref.value.trim().toUpperCase().replace(/\s+/g, ''), ph = f.phone.value.replace(/\D/g, '');
+      var ref = f.ref.value.trim().toUpperCase().replace(/\s+/g, ''), ph = f.phone.value.replace(/[٠-٩]/g, function (c) { return c.charCodeAt(0) - 1632; }).replace(/[۰-۹]/g, function (c) { return c.charCodeAt(0) - 1776; }).replace(/\D/g, '');
       if (ref && ref.indexOf('RI-') !== 0) { ref = 'RI-' + ref.replace(/^RI/, ''); }
       if (!/^RI-[A-Z0-9]{6}$/.test(ref) || ph.length !== 4) { return show('bad', [L.none]); }
       busy = true;
@@ -520,12 +531,29 @@
           busy = false;
           if (j.http === 429) { return show('bad', [L.busy]); }
           if (!j.ok) { return show('bad', [L.none]); }
-          var opt = j.room && d.querySelector('[data-booking] select[name=room] option[value="' + j.room + '"]');
+          function nm(id) {
+            var o = id && d.querySelector('[data-booking] select[name=room] option[value="' + id + '"]');
+            return o ? o.textContent.replace(/\s*[(（].*$/, '').trim() : '';
+          }
+          function rl(room, combo, n) {      // "2 × Standard + 1 × Triple" or "Junior Suite"
+            if (combo && combo.length) { return combo.map(function (c) { return c.n + ' × ' + nm(c.room); }).join(' + '); }
+            var t = nm(room); return t ? ((n > 1 ? n + ' × ' : '') + t) : '';
+          }
           var line = [j['in'] + ' → ' + j.out, j.nights + ' ' + L.nights, j.guests + ' ' + L.guests];
-          if (opt) { line.push(opt.textContent); }
+          var now = rl(j.room, j.combo, j.rooms);
+          if (now && !j.changed) { line.push(now); }
           var lines = [L[j.status] || L['new'], j.ref + ' · ' + line.join(' · ')];
+          if (j.changed && now) {
+            var was = rl(j.was_room, j.was_combo, 0);
+            lines.push(L.changed + ' ' + now + (was ? ' (' + L.was + ' ' + was + ')' : ''));
+          }
           if (j.total) { lines.push(L.total + ': $' + j.total); }
           show(j.status === 'confirmed' ? 'ok' : j.status === 'cancelled' ? 'bad' : 'wait', lines);
+          if (j.changed) { out.children[2] && out.children[2].classList.add('st-chg'); }
+          if (j.letter && L.letter) {
+            var lt = d.createElement('a'); lt.className = 'btn'; lt.target = '_blank'; lt.rel = 'noopener';
+            lt.href = j.letter; lt.textContent = L.letter; out.appendChild(lt);
+          }
           if (j.status === 'confirmed' && L.wa) {
             var a = d.createElement('a'); a.className = 'btn btn-line'; a.target = '_blank'; a.rel = 'noopener';
             a.href = 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(L.extendMsg.replace('{ref}', j.ref)); a.textContent = L.extend; out.appendChild(a);

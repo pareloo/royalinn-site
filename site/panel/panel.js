@@ -472,6 +472,10 @@
       if (j.ok) { if (st === 'confirmed' && tab === 'new') { toast(j.mailed ? 'تم تأكيد الحجز وأُرسل التأكيد إلى بريد الزبون.' : 'تم تأكيد الحجز. أرسل الآن رسالة التأكيد للزبون.'); return go('active'); }
         toast(st === 'confirmed' ? 'تم تأكيد الحجز' : st === 'cancelled' ? 'تم الإلغاء' : st === 'new' ? 'أُعيد إلى الطلبات الجديدة' : 'تم الحفظ'); loadList(); }
       else if (j.error === 'room_taken') toast('هذه الغرفة محجوزة في هذه التواريخ للضيف: ' + j.by);
+      else if (j.error === 'full') {
+        if (confirm('لا توجد غرف شاغرة من هذا النوع في هذه التواريخ (أو التواريخ مغلقة). تأكيده سيعني حجزاً زائداً. هل تؤكّده رغم ذلك؟')) { var m2 = more || {}; m2.force = true; update(ref, st, note, m2); }
+        else loadList();
+      }
       else if (!gone(j) && j.status) { toast('لم يتم الحفظ'); loadList(); }
     });
   }

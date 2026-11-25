@@ -313,7 +313,7 @@ def init():
         cols = [r[1] for r in con.execute('PRAGMA table_info(bookings)')]
         for c, t in (('total', 'INTEGER'), ('source', 'TEXT'), ('room_no', 'TEXT'), ('paid', 'INTEGER'), ('arrived', 'TEXT'), ('departed', 'TEXT'),
                      ('agency_id', 'INTEGER'), ('pay_by', 'TEXT'), ('referrer', 'TEXT'), ('net', 'INTEGER'),
-                     ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER'), ('rooms', 'INTEGER'), ('combo', 'TEXT')):
+                     ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER'), ('rooms', 'INTEGER'), ('combo', 'TEXT'), ('req_room', 'TEXT'), ('req_combo', 'TEXT')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
         ucols = [r[1] for r in con.execute('PRAGMA table_info(units)')]
@@ -386,6 +386,21 @@ def check_dates(cin, cout):
     if a < today or b <= a or (b - a).days > MAX_NIGHTS or a > today + dt.timedelta(days=MAX_AHEAD_DAYS):
         return None, 'dates'
     return (a, b), None
+
+
+def booking_fits(con, r):
+    """Would confirming this booking keep every night within the hotel's rooms (closures included)?"""
+    a, b = dt.date.fromisoformat(r['check_in']), dt.date.fromisoformat(r['check_out'])
+    c = _g(r, 'combo')
+    if c:
+        try:
+            return combo_free(con, a, b, json.loads(c), r['ref'])
+        except ValueError:
+            pass
+    return availability(con, a, b, r['room'], r['ref'], need=_g(r, 'rooms') or rooms_needed(r['room'], r['guests']))
+
+
+DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
 
 
 def availability(con, a, b, room, skip=None, need=1):
@@ -519,14 +534,12 @@ def validate_booking(d):
     if err:
         errs.append('dates')
     name = clean(d.get('name'), 80)
-    phone = clean(d.get('phone'), 24)
+    phone = clean(str(d.get('phone') or '').translate(DIGITS), 24)
     email = clean(d.get('email'), 254)
     room = clean(d.get('room'), 40)
     msg = clean(d.get('message'), 600)
-    try:
-        guests = int(d.get('guests') or 2)
-    except (TypeError, ValueError):
-        guests = 0
+    g = d.get('guests', 2)
+    guests = g if (isinstance(g, int) and not isinstance(g, bool)) else (int(g) if isinstance(g, str) and g.strip().isdigit() else 0)
     if len(name) < 2:
         errs.append('name')
     if not PHONE_RE.match(phone) or len(re.sub(r'\D', '', phone)) < 7:
@@ -1474,7 +1487,7 @@ class H(BaseHTTPRequestHandler):
             do = q.get('do'); done = None
             with LOCK, db() as con:
                 r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone(); S = settings(con)
-                if r and r['status'] == 'new' and do in ('confirm', 'cancel'):
+                if r and r['status'] == 'new' and do in ('confirm', 'cancel') and not (do == 'confirm' and not booking_fits(con, r)):
                     st = 'confirmed' if do == 'confirm' else 'cancelled'
                     con.execute('UPDATE bookings SET status=?, staff_note=?, updated=? WHERE ref=?',
                                 (st, ((r['staff_note'] or '') + ' · %s من البريد' % ('أُكِّد' if st == 'confirmed' else 'رُفض')).strip(' ·'), now(), r['ref']))
@@ -1531,15 +1544,25 @@ class H(BaseHTTPRequestHandler):
             if limited('st:' + self.ip(), 12, 600):
                 return self.send(429, {'ok': False, 'error': 'busy'})
             ref = (q.get('ref') or '').strip().upper()
-            last4 = re.sub(r'\D', '', q.get('phone') or '')[-4:]
+            last4 = re.sub(r'\D', '', (q.get('phone') or '').translate(DIGITS))[-4:]
             if not re.fullmatch(r'RI-[A-Z0-9]{6}', ref) or len(last4) != 4:
                 return self.send(400, {'ok': False, 'error': 'fields'})
             with db() as con:
                 r = con.execute('SELECT * FROM bookings WHERE ref=?', (ref,)).fetchone()
             if not r or re.sub(r'\D', '', r['phone'])[-4:] != last4:
                 return self.send(404, {'ok': False, 'error': 'none'})
+            def cl(c):
+                try:
+                    return [{'room': k, 'n': int(v)} for k, v in (json.loads(c) or {}).items() if int(v) > 0] if c else None
+                except (ValueError, TypeError, AttributeError):
+                    return None
+            wr, wc = _g(r, 'req_room'), cl(_g(r, 'req_combo'))
+            changed = bool(wr or wc) and (wr != (r['room'] or '-') or wc != cl(_g(r, 'combo')))
             return self.send(200, {'ok': True, 'ref': r['ref'], 'status': r['status'], 'in': r['check_in'], 'out': r['check_out'],
-                                   'nights': r['nights'], 'guests': r['guests'], 'room': r['room'], 'total': r['total'], 'breakfast': bool(r['breakfast'])})
+                                   'nights': r['nights'], 'guests': r['guests'], 'room': r['room'], 'combo': cl(_g(r, 'combo')), 'rooms': _g(r, 'rooms'),
+                                   'total': r['total'], 'breakfast': bool(r['breakfast']), 'changed': changed,
+                                   'was_room': (wr if wr and wr != '-' else None) if changed else None, 'was_combo': wc if changed else None,
+                                   'letter': ('/api/confirmation/%s/%s' % (r['ref'], letter_key(r['ref']))) if r['status'] == 'confirmed' else None})
         if p.startswith('/api/admin/'):
             if p == '/api/admin/me':
                 return self.send(200, {'ok': True, 'auth': bool(self.session()), 'configured': bool(os.environ.get('PANEL_PASSWORD'))})
@@ -1596,14 +1619,14 @@ class H(BaseHTTPRequestHandler):
                     week = []
                     for i in range(14):
                         d = today + dt.timedelta(days=i); ds = d.isoformat()
-                        week.append({'date': ds, 'booked': sum(max(1, sum(units(x).values())) for x in conf if x['check_in'] <= ds < x['check_out']),
+                        week.append({'date': ds, 'booked': sum(max(1, sum(held(units(x)).values())) for x in conf if x['check_in'] <= ds < x['check_out']),
                                      'new': sum(1 for x in live if x['status'] == 'new' and x['check_in'] <= ds < x['check_out']),
                                      'closed': any(c['room'] is None and c['date_from'] <= ds <= c['date_to'] for c in cls)})
                     counts = {s: con.execute('SELECT COUNT(*) FROM bookings WHERE status=?', (s,)).fetchone()[0] for s in STATUSES}
                     newest = con.execute("SELECT * FROM bookings WHERE status='new' ORDER BY created DESC LIMIT 5").fetchall()
                     return self.send(200, {
                         'ok': True, 'today': ts, 'counts': counts, 'total_rooms': total, 'inventory_set': len(known),
-                        'booked_tonight': sum(max(1, sum(units(x).values())) for x in conf if x['check_in'] <= ts < x['check_out']),
+                        'booked_tonight': sum(max(1, sum(held(units(x)).values())) for x in conf if x['check_in'] <= ts < x['check_out']),
                         'in_house': sum(1 for x in conf if x['arrived'] and not x['departed']),
                         'unassigned_tonight': sum((_g(x, 'rooms') or 1) for x in conf if not units(x) and x['check_in'] <= ts < x['check_out']),
                         'arrivals': [row(x) for x in conf if x['check_in'] == ts],
@@ -1706,7 +1729,8 @@ class H(BaseHTTPRequestHandler):
                     load_agencies(con)
                     w.writerow(cols + ['agency'])
                     for r in con.execute('SELECT * FROM bookings ORDER BY created'):
-                        w.writerow(['' if r[c] is None else r[c] for c in cols] + [AGENCIES.get(r['agency_id'], '') if r['agency_id'] else ''])
+                        safe = lambda v: ("'" + v) if isinstance(v, str) and v[:1] in ('=', '+', '-', '@', '\t', '\r') and not re.fullmatch(r'\+?[0-9 ()\-]+', v) else v
+                        w.writerow([safe('' if r[c] is None else r[c]) for c in cols] + [safe(AGENCIES.get(r['agency_id'], '') if r['agency_id'] else '')])
                     return self.send(200, raw=('﻿' + out.getvalue()).encode(), ctype='text/csv; charset=utf-8',
                                      extra={'Content-Disposition': 'attachment; filename="royalinn-bookings.csv"'})
         return self.send(404, {'ok': False})
@@ -1816,7 +1840,8 @@ class H(BaseHTTPRequestHandler):
                     while con.execute('SELECT 1 FROM bookings WHERE ref=?', (ref,)).fetchone():
                         ref = new_ref()
                     if total is None and room:
-                        per = nightly(con, room, guests, [f + dt.timedelta(days=i) for i in range((t - f).days)])
+                        _ns = [f + dt.timedelta(days=i) for i in range((t - f).days)]
+                        per, _pct = discounted(con, nightly(con, room, guests, _ns), _ns)
                         total = None if any(x is None for x in per) else sum(per)
                         if total is not None and d.get('breakfast'):
                             total += BREAKFAST * guests * len(per)
@@ -1934,7 +1959,9 @@ class H(BaseHTTPRequestHandler):
                     if too_many(room if room in ROOMS else None, guests):
                         return self.send(400, {'ok': False, 'error': 'guests', 'max': MAX_GUESTS.get(room, MAX_ANY) if room else MAX_ANY})
                     bf = 1 if d.get('breakfast', bool(cur['breakfast'])) else 0
-                    keep = _g(cur, 'combo') if (room == cur['room'] and guests == cur['guests']) else None   # a mixed choice stays until room or guests change
+                    keep = _g(cur, 'combo') if room == cur['room'] else None   # a mixed choice stays while it still holds the party
+                    if keep and guests != cur['guests'] and not parse_combo(keep, guests):
+                        keep = None
                     kc = json.loads(keep) if keep else None
                     stay_changed = (f.isoformat(), t.isoformat(), room, guests, bf) != (cur['check_in'], cur['check_out'], cur['room'], cur['guests'], cur['breakfast'])
                     free = True
@@ -1961,6 +1988,9 @@ class H(BaseHTTPRequestHandler):
                     room_no = cur['room_no']
                     if room_no and stay_changed and unit_busy(con, room_no, f.isoformat(), t.isoformat(), cur['ref']):
                         room_no = None        # the numbered room is taken on the new dates; the desk picks another
+                    if (room != cur['room'] or keep != _g(cur, 'combo')) and not _g(cur, 'req_room') and not _g(cur, 'req_combo'):
+                        # remember what the guest first asked for, once, so their status page can show the change
+                        con.execute('UPDATE bookings SET req_room=?, req_combo=? WHERE ref=?', (cur['room'] or '-', _g(cur, 'combo'), m.group(1)))
                     con.execute('UPDATE bookings SET name=?, phone=?, email=?, check_in=?, check_out=?, nights=?, guests=?, rooms=?, combo=?, room=?, breakfast=?, total=?, net=?, room_no=?, updated=? WHERE ref=?',
                                 (name, phone, email, f.isoformat(), t.isoformat(), (t - f).days, guests, (sum(units(cur).values()) if keep else rooms_needed(room, guests)), keep, room, bf, total, net_of(con, total, cur['agency_id']), room_no, now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
@@ -2074,6 +2104,7 @@ class H(BaseHTTPRequestHandler):
                     u0 = con.execute('SELECT room FROM units WHERE id=?', (int(m.group(1)),)).fetchone()
                     if not u0:
                         return self.send(404, {'ok': False})
+                    had_c = bool(con.execute('SELECT 1 FROM units WHERE room=?', (CONNECT,)).fetchone())
                     if m.group(2):
                         con.execute('DELETE FROM units WHERE id=?', (int(m.group(1)),))
                         if not con.execute('SELECT 1 FROM units WHERE room=?', (u0['room'],)).fetchone():
@@ -2090,6 +2121,8 @@ class H(BaseHTTPRequestHandler):
                         if 'note' in d:
                             con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))
                     sync_inventory(con)
+                    if had_c and not con.execute('SELECT 1 FROM units WHERE room=?', (CONNECT,)).fetchone():
+                        con.execute('INSERT OR REPLACE INTO inventory(room,count) VALUES(?,0)', (FAMILY,))   # no connecting room left: nothing to sell as a family suite
                 return self.send(200, {'ok': True})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/late', p)
             if m:
@@ -2128,10 +2161,12 @@ class H(BaseHTTPRequestHandler):
                     a, b = (old_out, new_out) if new_out > old_out else (new_out, old_out)
                     nights = [a + dt.timedelta(days=i) for i in range((b - a).days)]
                     sgn = 1 if new_out > old_out else -1
-                    free = True if sgn < 0 or cur['status'] != 'confirmed' else availability(con, a, b, cur['room'])
+                    kc = json.loads(_g(cur, 'combo')) if _g(cur, 'combo') else None
+                    free = True if sgn < 0 or cur['status'] != 'confirmed' else (
+                        combo_free(con, a, b, kc, cur['ref']) if kc else availability(con, a, b, cur['room'], cur['ref'], need=_g(cur, 'rooms') or rooms_needed(cur['room'], cur['guests'])))
                     amount = None
-                    if cur['room']:
-                        per, _pct = discounted(con, nightly(con, cur['room'], cur['guests'], nights), nights)
+                    if cur['room'] or kc:
+                        per, _pct = discounted(con, combo_nightly(con, kc, cur['guests'], nights) if kc else nightly(con, cur['room'], cur['guests'], nights), nights)
                         if not any(x is None for x in per):
                             amount = sum(per) + (BREAKFAST * cur['guests'] * len(per) if cur['breakfast'] else 0)
                     total = None if (cur['total'] is None or amount is None) else max(0, cur['total'] + sgn * amount)
@@ -2164,6 +2199,8 @@ class H(BaseHTTPRequestHandler):
                         clash = unit_busy(con, room_no, cur['check_in'], cur['check_out'], cur['ref'])
                         if clash and not d.get('force'):
                             return self.send(409, {'ok': False, 'error': 'room_taken', 'by': clash['name'], 'ref': clash['ref']})
+                    if st == 'confirmed' and cur['status'] != 'confirmed' and not d.get('force') and not booking_fits(con, cur):
+                        return self.send(409, {'ok': False, 'error': 'full'})
                     if d.get('no_show'):
                         st = 'cancelled'; d['note'] = ((cur['staff_note'] or '') + ' · عدم حضور (No-show)').strip(' ·')
                     arrived = cur['arrived'] if 'arrived' not in d else (now() if d['arrived'] else None)
