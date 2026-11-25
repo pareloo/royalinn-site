@@ -294,12 +294,16 @@ def init():
         # if the hotel deletes it in the panel it stays deleted.
         if not con.execute("SELECT 1 FROM settings WHERE k='seed_offer_ny2027'").fetchone():
             con.execute('INSERT INTO offers(percent,title_ar,title_en,date_from,date_to,min_nights,created) VALUES(?,?,?,?,?,?,?)',
-                        (20, 'عرض خاص لفترة محدودة', 'Limited-time offer', '2026-11-25', '2026-12-31', 1, dt.datetime.now().isoformat(timespec='seconds')))
+                        (20, 'عرض خاص لفترة محدودة', 'Limited-time offer', '2026-11-25', '2026-12-27', 1, dt.datetime.now().isoformat(timespec='seconds')))
             con.execute("INSERT INTO settings(k,v) VALUES('seed_offer_ny2027','1')")
         # the hotel wants it presented as an offer that starts now, not a New Year offer (25 Nov 2026)
         if not con.execute("SELECT 1 FROM settings WHERE k='rename_offer_ny2027'").fetchone():
             con.execute("UPDATE offers SET title_ar=?, title_en=? WHERE title_en='New Year offer'", ('عرض خاص لفترة محدودة', 'Limited-time offer'))
             con.execute("INSERT INTO settings(k,v) VALUES('rename_offer_ny2027','1')")
+        # the offer ends on the night of 27 December: New Year nights are sold at the normal rate (asked 25 Nov 2026)
+        if not con.execute("SELECT 1 FROM settings WHERE k='offer_ends_2712'").fetchone():
+            con.execute("UPDATE offers SET date_to='2026-12-27' WHERE title_en='Limited-time offer' AND date_to='2026-12-31'")
+            con.execute("INSERT INTO settings(k,v) VALUES('offer_ends_2712','1')")
         for k, (a, b) in DEFAULT_PRICES.items():
             con.execute('INSERT OR IGNORE INTO prices(room,price,price2) VALUES(?,?,?)', (k, a, b))
     path = os.path.join(DATA, 'secret.key')
