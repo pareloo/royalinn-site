@@ -91,10 +91,14 @@ def parse_combo(raw, guests):
     """A room combination chosen on the site: {type: count}. None when invalid (too small for the party, empty rooms, unknown type)."""
     try:
         c = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-        c = {k: int(v) for k, v in c.items() if int(v) > 0}
+        if not isinstance(c, dict) or any(type(v) is not int or v < 1 for v in c.values()):
+            return None
     except (ValueError, TypeError, AttributeError):
         return None
     if not c or any(k not in ROOMS for k in c) or sum(c.values()) > guests or sum(MAX_GUESTS[k] * n for k, n in c.items()) < guests:
+        return None
+    # no room may be left without its own guest once the others are full: drop combos with a spare room
+    if any(sum(MAX_GUESTS[j] * m for j, m in c.items()) - MAX_GUESTS[k] >= guests for k in c):
         return None
     return c
 
@@ -167,7 +171,7 @@ def suggest(con, a, b, guests, limit=4):
     free = free_units(con, a, b)
     memo = {}
     types = [k for k in ROOMS if k not in shut and free[k] != 0]
-    priced = [k for k in types if None not in _one_room(con, k, 1, nights[:1])]
+    priced = [k for k in types if None not in _one_room(con, k, 1, nights)]
     cap = {k: min(-(-guests // 1), free[k] if free[k] is not None else guests) for k in types}
     found = []
 
@@ -188,7 +192,7 @@ def suggest(con, a, b, guests, limit=4):
         combo.pop(k, None)
     walk(0, {}, 0, 0)
     for k in types:                        # a suite on request, alone, when it fits the party
-        if k not in priced and MAX_GUESTS[k] >= guests:
+        if k not in priced and MAX_GUESTS[k] >= guests and None in _one_room(con, k, 1, nights[:1]) and not any(_one_room(con, k, 1, nights)):
             found.append({k: 1})
     opts = []
     for c in found:
@@ -325,7 +329,7 @@ def check_dates(cin, cout):
     today = dt.date.today()
     if not a or not b:
         return None, 'dates'
-    if a < today - dt.timedelta(days=1) or b <= a or (b - a).days > MAX_NIGHTS or a > today + dt.timedelta(days=MAX_AHEAD_DAYS):
+    if a < today or b <= a or (b - a).days > MAX_NIGHTS or a > today + dt.timedelta(days=MAX_AHEAD_DAYS):
         return None, 'dates'
     return (a, b), None
 
@@ -1420,7 +1424,9 @@ class H(BaseHTTPRequestHandler):
             dates, err = check_dates(q.get('in'), q.get('out'))
             room = q.get('room') or None
             try:
-                guests = max(1, min(MAX_PARTY, int(q.get('guests') or 2)))
+                guests = int(q.get('guests') or 2)
+                if not 1 <= guests <= MAX_PARTY:
+                    return self.send(400, {'ok': False, 'error': 'guests', 'max': MAX_PARTY})
             except ValueError:
                 guests = 2
             if err or (room and room not in ROOMS):
@@ -1491,7 +1497,7 @@ class H(BaseHTTPRequestHandler):
                     conf = [x for x in live if x['status'] == 'confirmed']
 
                     def night(ds, k):
-                        return sum(1 for x in conf if x['room'] == k and x['check_in'] <= ds < x['check_out'])
+                        return sum(units(x).get(k, 0) for x in conf if x['check_in'] <= ds < x['check_out'])
                     rooms = []
                     for k, v in ROOMS.items():
                         booked = night(ts, k); cnt = inv.get(k)
@@ -1503,16 +1509,16 @@ class H(BaseHTTPRequestHandler):
                     week = []
                     for i in range(14):
                         d = today + dt.timedelta(days=i); ds = d.isoformat()
-                        week.append({'date': ds, 'booked': sum(1 for x in conf if x['check_in'] <= ds < x['check_out']),
+                        week.append({'date': ds, 'booked': sum(max(1, sum(units(x).values())) for x in conf if x['check_in'] <= ds < x['check_out']),
                                      'new': sum(1 for x in live if x['status'] == 'new' and x['check_in'] <= ds < x['check_out']),
                                      'closed': any(c['room'] is None and c['date_from'] <= ds <= c['date_to'] for c in cls)})
                     counts = {s: con.execute('SELECT COUNT(*) FROM bookings WHERE status=?', (s,)).fetchone()[0] for s in STATUSES}
                     newest = con.execute("SELECT * FROM bookings WHERE status='new' ORDER BY created DESC LIMIT 5").fetchall()
                     return self.send(200, {
                         'ok': True, 'today': ts, 'counts': counts, 'total_rooms': total, 'inventory_set': len(known),
-                        'booked_tonight': sum(1 for x in conf if x['check_in'] <= ts < x['check_out']),
+                        'booked_tonight': sum(max(1, sum(units(x).values())) for x in conf if x['check_in'] <= ts < x['check_out']),
                         'in_house': sum(1 for x in conf if x['arrived'] and not x['departed']),
-                        'unassigned_tonight': sum(1 for x in conf if not x['room'] and x['check_in'] <= ts < x['check_out']),
+                        'unassigned_tonight': sum((_g(x, 'rooms') or 1) for x in conf if not units(x) and x['check_in'] <= ts < x['check_out']),
                         'arrivals': [row(x) for x in conf if x['check_in'] == ts],
                         'departures': [row(x) for x in conf if x['check_out'] == ts],
                         'tomorrow': [row(x) for x in conf if x['check_in'] == (today + dt.timedelta(days=1)).isoformat()],
@@ -1588,7 +1594,7 @@ class H(BaseHTTPRequestHandler):
                         days = 31
                     end = start + dt.timedelta(days=days)
                     dates = [start + dt.timedelta(days=i) for i in range(days)]
-                    bks = con.execute("SELECT room, status, check_in, check_out FROM bookings WHERE status!='cancelled' AND check_in < ? AND check_out > ?",
+                    bks = con.execute("SELECT room, rooms, combo, status, check_in, check_out FROM bookings WHERE status!='cancelled' AND check_in < ? AND check_out > ?",
                                       (end.isoformat(), start.isoformat())).fetchall()
                     inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
                     cls = con.execute('SELECT room, date_from, date_to FROM closures WHERE date_from < ? AND date_to >= ?', (end.isoformat(), start.isoformat())).fetchall()
@@ -1597,12 +1603,12 @@ class H(BaseHTTPRequestHandler):
                         cells = []
                         for d in dates:
                             ds = d.isoformat()
-                            conf = sum(1 for x in bks if x['room'] == k and x['status'] == 'confirmed' and x['check_in'] <= ds < x['check_out'])
-                            new = sum(1 for x in bks if x['room'] == k and x['status'] == 'new' and x['check_in'] <= ds < x['check_out'])
+                            conf = sum(units(x).get(k, 0) for x in bks if x['status'] == 'confirmed' and x['check_in'] <= ds < x['check_out'])
+                            new = sum(units(x).get(k, 0) for x in bks if x['status'] == 'new' and x['check_in'] <= ds < x['check_out'])
                             closed = any((c['room'] in (None, k)) and c['date_from'] <= ds <= c['date_to'] for c in cls)
                             cells.append([conf, new, 1 if closed else 0])
                         rows.append({'id': k, 'name': v[1], 'count': inv.get(k), 'cells': cells})
-                    unassigned = [[sum(1 for x in bks if not x['room'] and x['status'] == s and x['check_in'] <= d.isoformat() < x['check_out']) for s in ('confirmed', 'new')] for d in dates]
+                    unassigned = [[sum((_g(x, 'rooms') or 1) for x in bks if not units(x) and x['status'] == s and x['check_in'] <= d.isoformat() < x['check_out']) for s in ('confirmed', 'new')] for d in dates]
                     return self.send(200, {'ok': True, 'dates': [d.isoformat() for d in dates], 'rows': rows, 'any': unassigned})
                 if p == '/api/admin/export.xlsx':
                     return self.send(200, raw=export_book(con), ctype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

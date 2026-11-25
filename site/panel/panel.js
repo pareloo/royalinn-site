@@ -415,7 +415,7 @@
       var F = {};
       [['name', 'الاسم', 'text', b.name], ['phone', 'الهاتف', 'tel', b.phone === '-' ? '' : b.phone], ['email', 'البريد', 'email', b.email || ''], ['in', 'الوصول', 'date', b.check_in], ['out', 'المغادرة', 'date', b.check_out],
        ['guests', 'الضيوف', 'number', b.guests], ['total', 'المبلغ $ (فارغ = يُحسب تلقائياً)', 'number', '']].forEach(function (x) {
-        var l = el('label', null, x[1]), i = el('input'); i.type = x[2]; i.value = x[3]; if (x[2] !== 'text') i.dir = 'ltr'; if (x[0] === 'guests') { i.min = 1; i.max = 12; } F[x[0]] = i; l.appendChild(i); ed.appendChild(l);
+        var l = el('label', null, x[1]), i = el('input'); i.type = x[2]; i.value = x[3]; if (x[2] !== 'text') i.dir = 'ltr'; if (x[0] === 'guests') { i.min = 1; i.max = 40; } F[x[0]] = i; l.appendChild(i); ed.appendChild(l);
       });
       var lr = el('label', null, 'نوع الغرفة'), rs = el('select'); var o1 = el('option', null, 'غير محدد'); o1.value = ''; rs.appendChild(o1);
       ROOMS.forEach(function (r) { var o = el('option', null, r.name); o.value = r.id; rs.appendChild(o); }); rs.value = b.room || ''; lr.appendChild(rs); ed.appendChild(lr);

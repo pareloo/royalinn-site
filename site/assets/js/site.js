@@ -63,10 +63,14 @@
       }
       return sum;
     }
+    var comboPrice = '';
     function partyLine(n) {
+      var base = L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value;
+      if (!room.value) { return comboName ? base + ' · ' + comboName + (comboPrice ? ' · ' + comboPrice : '') : base; }   // 'any room': the chosen option says how many rooms
       var r = roomsNeeded();
-      return L.lnights + ': ' + n + ' · ' + L.lguests + ': ' + guests.value + (r > 1 ? ' · ' + L.lrooms + ': ' + r : '');
+      return base + (r > 1 ? ' · ' + L.lrooms + ': ' + r : '');
     }
+    function dropCombo() { combo = ''; comboName = ''; comboPrice = ''; }
     function text(ref) {
       var lines = [L.hello], n = nights();
       if (ref) { lines.push(L.lref + ': ' + ref); }
@@ -75,7 +79,7 @@
       if (co.value) { lines.push(L.lout + ': ' + co.value); }
       if (n > 0) { lines.push(L.lnights + ': ' + n); }
       lines.push(L.lguests + ': ' + guests.value);
-      if (!comboName && roomsNeeded() > 1) { lines.push(L.lrooms + ': ' + roomsNeeded()); }
+      if (room.value && roomsNeeded() > 1) { lines.push(L.lrooms + ': ' + roomsNeeded()); }
       if (room.value) { lines.push(L.lroom + ': ' + room.options[room.selectedIndex].text); }
       else if (comboName) { lines.push(L.lroom + ': ' + comboName); }
       if (f('breakfast').checked) { lines.push(L.lbf + ': ' + L.yes); }
@@ -95,6 +99,7 @@
           if (key !== lastCheck || !j.ok) { return; }
           avail.textContent = '';
           var ok = room.value ? (j.rooms[0] && j.rooms[0].available) : j.open;
+          if (room.value || !ok) { dropCombo(); }
           var head = d.createElement('b'); head.textContent = ok ? L.availYes : L.availNo; avail.appendChild(head);
           if (room.value && j.rooms[0]) {
             var tot = j.rooms[0].total, line = partyLine(n);
@@ -109,15 +114,16 @@
             if (!room.value) {
               var ul = d.createElement('ul'); ul.className = 'book-opts';
               var opts = j.options || [];
-              if (combo && !opts.some(function (o) { return JSON.stringify(o.rooms) === combo; })) { combo = ''; comboName = ''; }
+              if (combo && !opts.some(function (o) { return JSON.stringify(o.rooms) === combo; })) { dropCombo(); }
               opts.forEach(function (o, i) {
                 var li = d.createElement('li'), bt = d.createElement('button'), key = JSON.stringify(o.rooms);
                 bt.type = 'button'; bt.setAttribute('data-combo', key); bt.setAttribute('aria-pressed', key === combo ? 'true' : 'false');
-                var nm = d.createElement('span'); nm.className = 'opt-name'; nm.setAttribute('data-label', L.lang === 'ar' ? o.name_ar : o.name_en);
+                var nm = d.createElement('span'), parts = []; nm.className = 'opt-name';
                 Object.keys(o.rooms).forEach(function (k) {
                   var op = room.querySelector('option[value="' + k + '"]'), ln = d.createElement('span');
-                  ln.textContent = o.rooms[k] + ' × ' + (op ? op.textContent : k); nm.appendChild(ln);
+                  ln.textContent = o.rooms[k] + ' × ' + (op ? op.textContent : k); nm.appendChild(ln); parts.push(ln.textContent);
                 });
+                nm.setAttribute('data-label', parts.join(' + '));            // in the page's own language
                 var pr = d.createElement('span'); pr.className = 'opt-price';
                 if (o.total) {
                   var a1 = d.createElement('b'); a1.textContent = money(o.per_night); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + L.pernight));
@@ -129,6 +135,8 @@
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
               });
               avail.appendChild(ul);
+              var keep = combo && ul.querySelector('[data-combo=\'' + combo + '\']');
+              if (keep) { var ps = keep.querySelector('.opt-price small'); comboPrice = ps ? ps.textContent : ''; sum.textContent = partyLine(n); sum.hidden = false; }
             }
           }
           avail.className = 'book-avail ' + (ok ? 'is-ok' : 'is-full'); avail.hidden = false;
@@ -141,8 +149,8 @@
       if (cb) {
         combo = cb.getAttribute('data-combo'); comboName = cb.querySelector('.opt-name').getAttribute('data-label');
         Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x === cb ? 'true' : 'false'); });
-        var pr = cb.querySelector('.opt-price small'); sum.textContent = L.lnights + ': ' + nights() + ' · ' + L.lguests + ': ' + guests.value + ' · ' + comboName + (pr ? ' · ' + pr.textContent : '');
-        sum.hidden = false; wa.href = waUrl();
+        var pr = cb.querySelector('.opt-price small'); comboPrice = pr ? pr.textContent : '';
+        sum.textContent = partyLine(nights()); sum.hidden = false; wa.href = waUrl();
       }
     });
     var note = d.createElement('p'); note.className = 'book-note'; note.hidden = true; note.textContent = L.roomsnote;
