@@ -445,7 +445,7 @@
     fetch(api + 'offers', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
       var o = j.ok && j.items && j.items[0];
       if (!o) { return; }
-      var ar = root.lang === 'ar', title = (ar ? o.title_ar : o.title_en) || '';
+      var ar = root.lang === 'ar', title = (ar ? o.title_ar : root.lang === 'en' ? o.title_en : '') || '';   // other languages use their own wording
       if (bar) {
         var B = bar.dataset, b1 = d.createElement('b'), s1 = d.createElement('span'), c1 = d.createElement('u');
         b1.textContent = B.off.replace('{p}', o.percent);
