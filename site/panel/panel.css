@@ -206,3 +206,6 @@ textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid #cfd8dc;borde
 #view-inq .pill{border-radius:99px;padding:3px 12px;font-size:.85rem;font-weight:700;background:#fff3d6;color:#7d5d24}
 #view-inq .pill.st-contacted{background:#e3eef6;color:#1a5a74}#view-inq .pill.st-won{background:#e1f2e8;color:#1b6240}#view-inq .pill.st-lost{background:#eceff1;color:#56646c}
 #view-inq .note-form{display:flex;gap:8px;margin-top:10px}#view-inq .note-form input{flex:1;min-width:0}
+.u-merge{display:flex;flex-direction:column;gap:4px;margin-top:6px}.u-merge button,.u-merge select{min-height:30px;font-size:.76rem;padding:2px 6px}
+.u-merge button.on{background:#1d6b3a;color:#fff;border-color:#1d6b3a}
+.merge-card .row{display:flex;gap:8px;flex-wrap:wrap}

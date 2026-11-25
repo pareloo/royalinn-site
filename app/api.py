@@ -36,13 +36,17 @@ ROOMS = {
     'standard': ('Standard Room', 'غرفة ستاندرد'),
     'triple': ('Triple Room', 'غرفة ثلاثية'),
     'junior-suite': ('Junior Suite', 'جناح جونيور'),
-    'royal-suite': ('Royal Suite with connecting room', 'جناح رويال مع غرفة متصلة'),
+    'royal-suite': ('Royal Suite', 'جناح رويال'),
+    'royal-family': ('Royal Suite with connecting room', 'جناح رويال مع غرفة متصلة'),
 }
-# The Royal Suite is sold only together with its own connecting room, which is charged at the Standard Room rate.
+FAMILY = 'royal-family'
+UNIT_TYPES = ('standard', 'triple', 'junior-suite', 'royal-suite')   # physical rooms; the connecting rooms are CONNECT units
+# The Royal Suite is sold on its own (two guests) or merged with its connecting room (up to four; the connecting room at the Standard rate).
+# Which connecting rooms are merged is set per room in the panel's room rack; an unmerged connecting room is sold as a Standard room.
 # The two-bedroom suite is no longer sold (hotel, Nov 2026); its name stays for old bookings.
 CONNECT = 'royal-connect'
 # most guests per room type (hotel, Nov 2026); the Royal Suite counts with its connecting room
-MAX_GUESTS = {'standard': 2, 'triple': 3, 'junior-suite': 2, 'royal-suite': 4}
+MAX_GUESTS = {'standard': 2, 'triple': 3, 'junior-suite': 2, 'royal-suite': 2, 'royal-family': 4}
 MAX_ANY = max(MAX_GUESTS.values())
 
 
@@ -79,6 +83,14 @@ def units(b):
     return {b['room']: (_g(b, 'rooms') or 1)} if _g(b, 'room') else {}
 
 
+def held(u):
+    """What a booking takes from the hotel: a merged Royal Suite holds one suite and one connecting room."""
+    u = dict(u)
+    if u.get(FAMILY):
+        u['royal-suite'] = u.get('royal-suite', 0) + u[FAMILY]
+    return u
+
+
 def room_label(b, i, fallback):
     """'Triple Room × 1 + Standard Room × 2' (i = 0 English, 1 Arabic)."""
     u = units(b)
@@ -105,7 +117,7 @@ def allocate(combo, guests):
     rooms = [[k, 1] for k, n in sorted(combo.items()) for _ in range(n)]
     left = guests - len(rooms)
     # rooms whose price does not change with more guests fill first; Standard rooms (single/double rate) last
-    order = sorted(range(len(rooms)), key=lambda i: (rooms[i][0] == 'standard', rooms[i][0] == 'royal-suite'))
+    order = sorted(range(len(rooms)), key=lambda i: (rooms[i][0] == 'standard', rooms[i][0] == FAMILY))
     for i in order:
         add = min(left, MAX_GUESTS[rooms[i][0]] - rooms[i][1])
         rooms[i][1] += add; left -= add
@@ -134,7 +146,7 @@ def free_units(con, a, b, skip=None):
     for k in ROOMS:
         if k not in inv:
             out[k] = None; continue
-        used = max(sum(units(x).get(k, 0) for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
+        used = max(sum(held(units(x)).get(k, 0) for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
         out[k] = max(inv[k] - used, 0)
     return out
 
@@ -155,7 +167,7 @@ def combo_free(con, a, b, combo, skip=None):
     if '*' in shut:
         return False
     free = free_units(con, a, b, skip)
-    return all(k not in shut and (free[k] is None or free[k] >= n) for k, n in combo.items())
+    return all(k not in shut and (free[k] is None or free[k] >= n) for k, n in held(combo).items())
 
 
 def suggest(con, a, b, guests, limit=4):
@@ -191,6 +203,7 @@ def suggest(con, a, b, guests, limit=4):
     for k in types:                        # a suite on request, alone, when it fits the party
         if k not in priced and MAX_GUESTS[k] >= guests and None in _one_room(con, k, 1, nights[:1]) and not any(_one_room(con, k, 1, nights)):
             found.append({k: 1})
+    found = [c for c in found if combo_free(con, a, b, c)]
     opts = []
     for c in found:
         base = combo_nightly(con, c, guests, nights, memo)
@@ -234,7 +247,7 @@ NAMES = dict(ROOMS, **{'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', '�
                        CONNECT: ('Connecting room (Royal Suite)', 'غرفة متصلة بجناح رويال')})
 STATUSES = ('new', 'confirmed', 'cancelled')
 # rates confirmed by the hotel (Nov 2026), USD per night incl. tax; price2 = two or more guests. None = on request
-DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (130, None), 'royal-suite': (150, None)}
+DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (130, None), 'royal-suite': (150, None)}   # royal-family = suite + Standard rate
 BREAKFAST = 10
 MAX_NIGHTS, MAX_AHEAD_DAYS = 60, 550
 os.environ['TZ'] = os.environ.get('HOTEL_TZ', '<+03>-3')
@@ -290,6 +303,23 @@ def init():
                      ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER'), ('rooms', 'INTEGER'), ('combo', 'TEXT')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
+        ucols = [r[1] for r in con.execute('PRAGMA table_info(units)')]
+        for c, t in (('pair', 'TEXT'), ('merge', 'INTEGER DEFAULT 1')):
+            if c not in ucols:
+                con.execute(f'ALTER TABLE units ADD COLUMN {c} {t}')
+        # five room types (hotel, 25 Nov 2026): until now 'royal-suite' meant the suite with its connecting room
+        if not con.execute("SELECT 1 FROM settings WHERE k='split_royal_2611'").fetchone():
+            con.execute("UPDATE bookings SET room=? WHERE room='royal-suite'", (FAMILY,))
+            for r in con.execute("SELECT ref, combo FROM bookings WHERE combo LIKE '%royal-suite%'").fetchall():
+                try:
+                    c = json.loads(r['combo']); c[FAMILY] = c.pop('royal-suite'); con.execute('UPDATE bookings SET combo=? WHERE ref=?', (json.dumps(c), r['ref']))
+                except (ValueError, KeyError):
+                    pass
+            inv = con.execute("SELECT count FROM inventory WHERE room='royal-suite'").fetchone()
+            if inv and not con.execute("SELECT 1 FROM inventory WHERE room=?", (FAMILY,)).fetchone():
+                con.execute('INSERT INTO inventory(room,count) VALUES(?,?)', (FAMILY, inv['count']))
+            sync_inventory(con)
+            con.execute("INSERT INTO settings(k,v) VALUES('split_royal_2611','1')")
         # New Year offer asked for by the hotel (25 Nov 2026): 20% off every night until 31 December. Added once;
         # if the hotel deletes it in the panel it stays deleted.
         if not con.execute("SELECT 1 FROM settings WHERE k='seed_offer_ny2027'").fetchone():
@@ -346,6 +376,12 @@ def check_dates(cin, cout):
 
 
 def availability(con, a, b, room, skip=None, need=1):
+    if room == FAMILY:
+        return combo_free(con, a, b, {FAMILY: need}, skip) and _availability(con, a, b, None, skip)
+    return _availability(con, a, b, room, skip, need)
+
+
+def _availability(con, a, b, room, skip=None, need=1):
     """True / False. A night is unavailable if the hotel closed it, or (when a room count is set) all rooms of that type are confirmed."""
     nights = [a + dt.timedelta(days=i) for i in range((b - a).days)]
     rows = con.execute('SELECT room, date_from, date_to FROM closures WHERE date_from < ? AND date_to >= ?', (b.isoformat(), a.isoformat())).fetchall()
@@ -363,7 +399,7 @@ def availability(con, a, b, room, skip=None, need=1):
             booked = con.execute("SELECT * FROM bookings WHERE status='confirmed' AND check_in < ? AND check_out > ? AND ref != ?",
                                  (b.isoformat(), a.isoformat(), skip or '')).fetchall()
             for n in nights:
-                used = sum(units(x).get(room, 0) for x in booked if dt.date.fromisoformat(x['check_in']) <= n < dt.date.fromisoformat(x['check_out']))
+                used = sum(held(units(x)).get(room, 0) for x in booked if dt.date.fromisoformat(x['check_in']) <= n < dt.date.fromisoformat(x['check_out']))
                 if used + need > inv['count']:
                     return False
     return True
@@ -379,8 +415,8 @@ def nightly(con, room, guests, nights):
 
 def _one_room(con, room, guests, nights):
     """Price for each night of one room. The Royal Suite adds its connecting room at the Standard rate (single rate, double rate from 4 guests)."""
-    if room == 'royal-suite':
-        a = _nightly(con, room, min(guests, 2), nights); b = _nightly(con, 'standard', 2 if guests >= 4 else 1, nights)
+    if room == FAMILY:
+        a = _nightly(con, 'royal-suite', min(guests, 2), nights); b = _nightly(con, 'standard', 2 if guests >= 4 else 1, nights)
         return [None if (x is None or y is None) else x + y for x, y in zip(a, b)]
     return _nightly(con, room, guests, nights)
 
@@ -430,7 +466,7 @@ def left(con, room, nights):
     a, b = nights[0], nights[-1] + dt.timedelta(days=1)
     booked = con.execute("SELECT * FROM bookings WHERE status='confirmed' AND check_in < ? AND check_out > ?",
                          (b.isoformat(), a.isoformat())).fetchall()
-    used = max(sum(units(x).get(room, 0) for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
+    used = max(sum(held(units(x)).get(room, 0) for x in booked if x['check_in'] <= n.isoformat() < x['check_out']) for n in nights)
     return max(inv['count'] - used, 0)
 
 
@@ -882,14 +918,23 @@ def desk_state(con):
     return S, soon, late, noshow
 
 
-def sync_inventory(con, room):
-    if room not in ROOMS:
+def sync_inventory(con, room=None):
+    """Once the hotel has entered its room numbers, room counts follow them (rooms out of service do not count).
+    Connecting rooms merged with a suite make the 'suite with connecting room' count; unmerged ones count as Standard rooms."""
+    us = con.execute('SELECT room, state, merge FROM units').fetchall()
+    if not us:
         return
-    """Once the hotel has entered its room numbers, the room count of that type follows them (rooms out of service do not count)."""
-    n = con.execute("SELECT COUNT(*) FROM units WHERE room=?", (room,)).fetchone()[0]
-    if n:
-        live = con.execute("SELECT COUNT(*) FROM units WHERE room=? AND state!='out'", (room,)).fetchone()[0]
-        con.execute('INSERT OR REPLACE INTO inventory(room,count) VALUES(?,?)', (room, live))
+    live = [u for u in us if u['state'] != 'out']
+    def n(f):
+        return sum(1 for u in live if f(u))
+    have = {u['room'] for u in us}
+    counts = {k: n(lambda u, k=k: u['room'] == k) for k in UNIT_TYPES if k in have}
+    if CONNECT in have:
+        if 'standard' in have:    # only once Standard rooms are numbered too; otherwise the hotel's own count stays
+            counts['standard'] += n(lambda u: u['room'] == CONNECT and not (u['merge'] if u['merge'] is not None else 1))
+        counts[FAMILY] = n(lambda u: u['room'] == CONNECT and (u['merge'] if u['merge'] is not None else 1))
+    for k, v in counts.items():
+        con.execute('INSERT OR REPLACE INTO inventory(room,count) VALUES(?,?)', (k, v))
 
 
 def unit_busy(con, no, a, b, skip=None):
@@ -1102,6 +1147,7 @@ def units_view(con, ds, free_only=False):
             continue
         g = stay or leave
         out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': NAMES.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'],
+                    'merge': (u['merge'] if u['merge'] is not None else 1) if u['room'] == CONNECT else None, 'pair': u['pair'] if u['room'] == CONNECT else None,
                     'leaving_today': bool(leave), 'guest': g['name'] if g else None, 'ref': g['ref'] if g else None,
                     'until': g['check_out'] if g else None, 'since': g['check_in'] if g else None})
     return out
@@ -1261,12 +1307,12 @@ def pricelist_html(con, agency=None):
     body = ''
     for k, (en, ar) in ROOMS.items():
         pr = prices.get(k); p1 = pr['price'] if pr else None; p2 = pr['price2'] if pr else None
-        if k == 'royal-suite':
+        if k == FAMILY:
+            pr = prices.get('royal-suite'); p1 = pr['price'] if pr else None
             st = prices.get('standard')
             s1 = st['price'] if st else None; s2 = (st['price2'] or s1) if st else None
             p1 = None if (p1 is None or s1 is None) else p1 + s1
             p2 = None if (p1 is None or s2 is None) else (pr['price'] + s2)
-            ar, en = ar + ' (الجناح + الغرفة المتصلة، يُباعان معاً)', en + ' (suite + connecting room, sold together)'
         nt = ' / '.join(x for x in (net(p1), net(p2) if p2 else '') if x)
         body += '<tr><td><b>%s</b> <i>%s</i></td><td>%s</td><td>%s</td>%s</tr>' % (e(ar), e(en), money(p1), money(p2) if p2 else ('—' if p1 is not None else money(None)), ('<td dir="ltr" class="num">%s</td>' % (nt or '—')) if agency else '')
     seasons = con.execute('SELECT * FROM rates WHERE date_to >= ? ORDER BY date_from, id', (today,)).fetchall()
@@ -1522,7 +1568,7 @@ class H(BaseHTTPRequestHandler):
                     conf = [x for x in live if x['status'] == 'confirmed']
 
                     def night(ds, k):
-                        return sum(units(x).get(k, 0) for x in conf if x['check_in'] <= ds < x['check_out'])
+                        return sum(held(units(x)).get(k, 0) for x in conf if x['check_in'] <= ds < x['check_out'])
                     rooms = []
                     for k, v in ROOMS.items():
                         booked = night(ts, k); cnt = inv.get(k)
@@ -1555,7 +1601,7 @@ class H(BaseHTTPRequestHandler):
                 if p == '/api/admin/units':
                     d0 = parse_day(q.get('date')) or dt.date.today()
                     return self.send(200, {'ok': True, 'date': d0.isoformat(), 'units': units_view(con, d0.isoformat()),
-                                           'rooms': [{'id': k, 'name': v[1]} for k, v in ROOMS.items()] + [{'id': CONNECT, 'name': NAMES[CONNECT][1]}]})
+                                           'rooms': [{'id': k, 'name': ROOMS[k][1]} for k in UNIT_TYPES] + [{'id': CONNECT, 'name': NAMES[CONNECT][1]}]})
                 if p == '/api/admin/units/free':
                     a, b = parse_day(q.get('in')), parse_day(q.get('out'))
                     if not a or not b or b <= a:
@@ -1573,7 +1619,7 @@ class H(BaseHTTPRequestHandler):
                 if p == '/api/admin/prices':
                     rows = {r['room']: r for r in con.execute('SELECT * FROM prices')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'price': rows[k]['price'] if k in rows else None,
-                                                                   'price2': rows[k]['price2'] if k in rows else None} for k, v in ROOMS.items()]})
+                                                                   'price2': rows[k]['price2'] if k in rows else None} for k, v in ROOMS.items() if k != FAMILY]})
                 if p == '/api/admin/agencies':
                     load_agencies(con)
                     items = []
@@ -1628,8 +1674,8 @@ class H(BaseHTTPRequestHandler):
                         cells = []
                         for d in dates:
                             ds = d.isoformat()
-                            conf = sum(units(x).get(k, 0) for x in bks if x['status'] == 'confirmed' and x['check_in'] <= ds < x['check_out'])
-                            new = sum(units(x).get(k, 0) for x in bks if x['status'] == 'new' and x['check_in'] <= ds < x['check_out'])
+                            conf = sum(held(units(x)).get(k, 0) for x in bks if x['status'] == 'confirmed' and x['check_in'] <= ds < x['check_out'])
+                            new = sum(held(units(x)).get(k, 0) for x in bks if x['status'] == 'new' and x['check_in'] <= ds < x['check_out'])
                             closed = any((c['room'] in (None, k)) and c['date_from'] <= ds <= c['date_to'] for c in cls)
                             cells.append([conf, new, 1 if closed else 0])
                         rows.append({'id': k, 'name': v[1], 'count': inv.get(k), 'cells': cells})
@@ -1779,7 +1825,7 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/admin/prices':
                 with db() as con:
                     for k in ROOMS:
-                        if k not in d or not isinstance(d[k], dict):
+                        if k == FAMILY or k not in d or not isinstance(d[k], dict):
                             continue
                         vals = []
                         for key in ('price', 'price2'):
@@ -1989,7 +2035,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {'ok': True})
             if p == '/api/admin/units':
                 room = d.get('room')
-                if room not in ROOMS and room != CONNECT:
+                if room not in UNIT_TYPES and room != CONNECT:
                     return self.send(400, {'ok': False, 'error': 'room'})
                 nos = []
                 a, b = clean(d.get('no'), 12), clean(d.get('to'), 12)
@@ -2004,7 +2050,7 @@ class H(BaseHTTPRequestHandler):
                     for x in nos:
                         if not con.execute('SELECT 1 FROM units WHERE no=?', (x,)).fetchone():
                             con.execute('INSERT INTO units(no,room,floor) VALUES(?,?,?)', (x, room, clean(d.get('floor'), 12) or None)); added += 1
-                    sync_inventory(con, room)
+                    sync_inventory(con)
                 return self.send(200, {'ok': True, 'added': added, 'skipped': len(nos) - added})
             m = re.fullmatch(r'/api/admin/units/(\d+)(/delete)?', p)
             if m:
@@ -2019,12 +2065,15 @@ class H(BaseHTTPRequestHandler):
                     else:
                         if d.get('state') in ('clean', 'dirty', 'out'):
                             con.execute('UPDATE units SET state=? WHERE id=?', (d['state'], int(m.group(1))))
-                        if d.get('room') in ROOMS or d.get('room') == CONNECT:
+                        if d.get('room') in UNIT_TYPES or d.get('room') == CONNECT:
                             con.execute('UPDATE units SET room=? WHERE id=?', (d['room'], int(m.group(1))))
+                        if 'merge' in d:          # a connecting room: merged with its suite, or sold as a Standard room
+                            con.execute('UPDATE units SET merge=? WHERE id=?', (1 if d.get('merge') else 0, int(m.group(1))))
+                        if 'pair' in d:
+                            con.execute('UPDATE units SET pair=? WHERE id=?', (clean(d.get('pair'), 12) or None, int(m.group(1))))
                         if 'note' in d:
                             con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))
-                    for rm in {u0['room'], d.get('room')} & set(ROOMS):
-                        sync_inventory(con, rm)
+                    sync_inventory(con)
                 return self.send(200, {'ok': True})
             m = re.fullmatch(r'/api/admin/bookings/(RI-[A-Z0-9]{6})/late', p)
             if m:

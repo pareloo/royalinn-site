@@ -300,9 +300,9 @@
      While an offer open to one-night stays runs today, every price shows the two-guest rate before and after the discount. */
   var TWO = { ar: 'لشخصين', en: 'for two', tr: '2 kişi' }[root.lang] || 'for two';
   function twoRate(rooms, id) {                                  // price per night for two guests, as the booking server counts it
-    var p = rooms[id], sd = rooms.standard; if (!p || p.price == null) { return null; }
+    var p = rooms[id === 'royal-family' ? 'royal-suite' : id], sd = rooms.standard; if (!p || p.price == null) { return null; }
     if (id === 'standard') { return p.price2 || p.price; }
-    if (id === 'royal-suite') { return (sd && sd.price != null) ? p.price + sd.price : null; }   // the suite with its connecting room
+    if (id === 'royal-family') { var rs = rooms['royal-suite']; return (rs && rs.price != null && sd && sd.price != null) ? rs.price + sd.price : null; }   // the suite with its connecting room
     return p.price;
   }
   function liveOffer(items) {
@@ -318,7 +318,7 @@
       var j = res[0], off = liveOffer(res[1].ok ? res[1].items : []);
       if (!j.ok) { return null; }
       Array.prototype.forEach.call(tags, function (t) {
-        var id = t.getAttribute('data-rp'), p = j.rooms[id]; if (!p) { return; }
+        var id = t.getAttribute('data-rp'), p = j.rooms[id] || (id === 'royal-family' ? j.rooms['royal-suite'] : null); if (!p) { return; }
         var frm = t.getAttribute('data-frm'), per = t.getAttribute('data-per');
         t.textContent = '';
         if (off) {
@@ -331,7 +331,8 @@
           return;
         }
         var p1 = p.price, p2 = p.price2, sd = j.rooms.standard;
-        if (id === 'royal-suite' && p1 != null) {                 // sold with its connecting room, charged at the Standard rate
+        if (id === 'royal-family') { p = j.rooms['royal-suite'] || {}; p1 = p.price; p2 = null; }
+        if (id === 'royal-family' && p1 != null) {                 // sold with its connecting room, charged at the Standard rate
           if (!sd || sd.price == null) { p1 = null; } else { p1 += sd.price; p2 = null; }
         }
         if (p1 == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
@@ -528,7 +529,7 @@
             if (!pd || !pd.offer || pd.offer.percent !== o.percent) { return; }
             var ul = d.createElement('ul'); ul.className = 'promo-rates';
             var sel = box.closest('[data-booking]').querySelector('[name=room]');
-            ['standard', 'triple', 'junior-suite', 'royal-suite'].forEach(function (id) {
+            ['standard', 'triple', 'junior-suite', 'royal-suite', 'royal-family'].forEach(function (id) {
               var r2 = twoRate(pd.rooms, id); if (r2 == null) { return; }
               var op = sel && sel.querySelector('option[value="' + id + '"]');
               var li = d.createElement('li'), nm = d.createElement('span'), pr = d.createElement('span');

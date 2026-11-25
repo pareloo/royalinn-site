@@ -603,8 +603,26 @@
       if (gone(j) || !j.ok) return;
       var box = $('#rack'); box.textContent = ''; var cnt = {};
       if (!j.units.length) { box.appendChild(el('p', 'empty', 'لم تُضَف أرقام الغرف بعد. أضفها من النموذج في الأسفل.')); $('#rack-sum').textContent = ''; return; }
-      var groups = {};
-      j.units.forEach(function (u) { cnt[u.state] = (cnt[u.state] || 0) + 1; (groups[u.room_name] = groups[u.room_name] || []).push(u); });
+      var groups = {}, suites = [], conns = [];
+      j.units.forEach(function (u) {
+        cnt[u.state] = (cnt[u.state] || 0) + 1; (groups[u.room_name] = groups[u.room_name] || []).push(u);
+        if (u.room === 'royal-suite') suites.push(u.no); if (u.room === 'royal-connect') conns.push(u);
+      });
+      if (conns.length) {
+        // one switch for all connecting rooms, beside the per-room buttons
+        var mc = el('div', 'card merge-card'), on = conns.filter(function (u) { return u.merge; }).length;
+        mc.appendChild(el('h2', null, 'دمج الغرف المتصلة مع جناح رويال'));
+        mc.appendChild(el('p', 'muted', 'الغرفة المدمجة تُعرض على الموقع ضمن «جناح رويال مع غرفة متصلة» (حتى 4 ضيوف). غير المدمجة تُباع كغرفة ستاندرد، والجناح يُباع وحده لضيفين. الآن: ' + on + ' مدمجة · ' + (conns.length - on) + ' ستاندرد.'));
+        var br = el('div', 'row');
+        [['دمج الكل', true], ['فصل الكل', false]].forEach(function (x) {
+          var bb = el('button', 'ghost sm', x[0]); bb.type = 'button';
+          bb.addEventListener('click', function () {
+            Promise.all(conns.map(function (u) { return api('units/' + u.id, { merge: x[1] }); })).then(function () { toast(x[1] ? 'دُمجت كل الغرف المتصلة' : 'فُصلت كل الغرف المتصلة'); loadRack(); });
+          });
+          br.appendChild(bb);
+        });
+        mc.appendChild(br); box.appendChild(mc);
+      }
       $('#rack-sum').textContent = Object.keys(UST).filter(function (k) { return cnt[k]; }).map(function (k) { return UST[k] + ': ' + cnt[k]; }).join(' · ');
       Object.keys(groups).forEach(function (g) {
         var c = el('div', 'card'); c.appendChild(el('h2', null, g + ' (' + groups[g].length + ')')); var grid = el('div', 'rack');
@@ -617,7 +635,19 @@
           if (u.clean === 'dirty') b('نُظِّفت', { state: 'clean' });
           else if (u.clean === 'clean' && !u.guest) b('تحتاج تنظيف', { state: 'dirty' });
           if (u.clean === 'out') b('إعادة للخدمة', { state: 'clean' }); else if (!u.guest) { b('خارج الخدمة', { state: 'out' }); b('حذف', {}, true); }
-          t.appendChild(row); grid.appendChild(t);
+          t.appendChild(row);
+          if (u.room === 'royal-connect') {
+            // a connecting room: merged with its suite (sold as "Royal Suite with connecting room") or sold as a Standard room
+            var mg = el('div', 'u-merge');
+            var tg = el('button', 'sm ' + (u.merge ? 'on' : 'ghost'), u.merge ? '✓ مدمجة مع الجناح' : 'تُباع كغرفة ستاندرد');
+            tg.type = 'button'; tg.title = 'اضغط للتبديل';
+            tg.addEventListener('click', function () { api('units/' + u.id, { merge: !u.merge }).then(function () { toast(u.merge ? 'أصبحت تُباع كغرفة ستاندرد' : 'دُمجت مع الجناح'); loadRack(); }); });
+            var ps = el('select', 'sm'); ps.appendChild(new Option('الجناح المرتبط…', ''));
+            suites.forEach(function (n) { ps.appendChild(new Option('جناح ' + n, n, false, n === u.pair)); });
+            ps.addEventListener('change', function () { api('units/' + u.id, { pair: ps.value }).then(function () { toast('حُفظ الربط'); }); });
+            mg.appendChild(tg); mg.appendChild(ps); t.appendChild(mg);
+          }
+          grid.appendChild(t);
         });
         c.appendChild(grid); box.appendChild(c);
       });
