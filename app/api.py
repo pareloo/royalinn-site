@@ -83,6 +83,11 @@ def units(b):
     return {b['room']: (_g(b, 'rooms') or 1)} if _g(b, 'room') else {}
 
 
+def r5(x):
+    """Money the guest sees or pays: whole dollars to the nearest 5, no small change (hotel, 25 Nov 2026)."""
+    return int(5 * round(x / 5.0))
+
+
 def held(u):
     """What a booking takes from the hotel: a merged Royal Suite holds one suite and one connecting room."""
     u = dict(u)
@@ -210,7 +215,7 @@ def suggest(con, a, b, guests, limit=4):
         per, pct = discounted(con, base, nights)
         total = None if None in per else sum(per)
         base_total = None if None in base else sum(base)
-        opts.append({'rooms': c, 'count': sum(c.values()), 'total': total, 'per_night': None if total is None else int(round(total / len(nights))),
+        opts.append({'rooms': c, 'count': sum(c.values()), 'total': total, 'per_night': None if total is None else r5(total / len(nights)),
                      'base_total': base_total if pct and base_total != total else None, 'offer_percent': pct if base_total != total else None,
                      'name_en': room_label({'combo': json.dumps(c)}, 0, ''), 'name_ar': room_label({'combo': json.dumps(c)}, 1, '')})
     opts.sort(key=lambda o: (o['total'] is None, o['total'] or 0, o['count']))
@@ -454,7 +459,7 @@ def discounted(con, per, nights):
         pct = max([o['percent'] for o in offers if o['date_from'] <= n.isoformat() <= o['date_to']] or [0])
         if p is not None and pct:
             best = max(best or 0, pct)
-            p = int(5 * round(p * (100 - pct) / 500.0))      # offer prices to the nearest 5 dollars (hotel, 25 Nov 2026)
+            p = r5(p * (100 - pct) / 100.0)      # offer prices to the nearest 5 dollars
         out.append(p)
     return out, best
 
@@ -484,7 +489,7 @@ def quote(con, a, b, guests, room=None):
         base_total = None if any(x is None for x in base) else sum(base)
         one, _p1 = discounted(con, _one_room(con, k, min(MAX_GUESTS[k], 2), nights), nights)
         out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k, need=need), 'rooms': need,
-                    'cap': MAX_GUESTS[k], 'one_night': None if None in one else int(round(sum(one) / len(nights))),
+                    'cap': MAX_GUESTS[k], 'one_night': None if None in one else r5(sum(one) / len(nights)),
                     'left': left(con, k, nights), 'total': total, 'nightly': per,
                     'base_total': base_total if pct and base_total != total else None, 'offer_percent': pct if base_total != total else None})
     return out
@@ -892,7 +897,7 @@ def night_rate(con, b):
         if per and per[0] is not None:
             return per[0]
     if b['total'] and b['nights']:
-        return int(round((b['total'] - (b['late_fee'] or 0)) / b['nights']))
+        return r5((b['total'] - (b['late_fee'] or 0)) / b['nights'])
     return None
 
 
@@ -912,7 +917,7 @@ def desk_state(con):
             stage = 'full' if (b['check_out'] < ts or mins >= half) else 'half'
             pct = int(S['late_full_pct'] if stage == 'full' else S['late_half_pct'])
             d.update(stage=stage, late_minutes=(mins - out) if b['check_out'] == ts else None, rate=rate,
-                     fee=None if rate is None else int(round(rate * pct / 100.0)), pct=pct)
+                     fee=None if rate is None else r5(rate * pct / 100.0), pct=pct)
             late.append(d)
         if not b['arrived'] and b['check_in'] < ts and b['check_out'] >= ts:
             noshow.append(row(b))
@@ -1023,7 +1028,7 @@ def net_of(con, total, agency_id):
     if total is None or not agency_id:
         return None
     a = con.execute('SELECT commission FROM agencies WHERE id=?', (agency_id,)).fetchone()
-    return None if a is None else int(round(total * (100 - a['commission']) / 100.0))
+    return None if a is None else r5(total * (100 - a['commission']) / 100.0)
 
 
 def agency_sums(con, aid):
@@ -1268,7 +1273,7 @@ def letter_html(r, S=None):
         rate = [('pay', e(L['by_agency'].format(a=agency)))]
     elif r['total']:
         paid = g('paid') or 0; lf = g('late_fee') or 0
-        rate = [('rate', '$%d' % round((r['total'] - lf) / max(1, r['nights']))), ('nights', '%d' % r['nights'])]
+        rate = [('rate', '$%d' % r5((r['total'] - lf) / max(1, r['nights']))), ('nights', '%d' % r['nights'])]
         if lf:
             rate.append(('late', '$%d' % lf))
         if paid:
@@ -1302,7 +1307,7 @@ def pricelist_html(con, agency=None):
     today = dt.date.today().isoformat()
     com = agency['commission'] if agency else 0
     money = lambda v: 'عند الطلب<i class="blk">on request</i>' if v is None else '$%d' % v
-    net = lambda v: '' if v is None else '$%d' % round(v * (100 - com) / 100.0)
+    net = lambda v: '' if v is None else '$%d' % r5(v * (100 - com) / 100.0)
     prices = {x['room']: x for x in con.execute('SELECT * FROM prices')}
     th = '<tr><th>نوع الغرفة <i>Room type</i></th><th>شخص واحد <i>1 guest</i></th><th>شخصان أو أكثر <i>2+ guests</i></th>%s</tr>' % ('<th>الصافي للوكالة <i>Net</i></th>' if agency else '')
     body = ''
@@ -1504,7 +1509,7 @@ class H(BaseHTTPRequestHandler):
                         ns = [dates[0] + dt.timedelta(days=i) for i in range((dates[1] - dates[0]).days)]
                         base = combo_nightly(con, c, guests, ns); per, pct = discounted(con, base, ns)
                         tot = None if None in per else sum(per)
-                        pick = {'rooms': c, 'total': tot, 'per_night': None if tot is None else int(round(tot / len(ns))),
+                        pick = {'rooms': c, 'total': tot, 'per_night': None if tot is None else r5(tot / len(ns)),
                                 'available': combo_free(con, dates[0], dates[1], c), 'count': sum(c.values())}
                     else:
                         pick = {'invalid': True}
@@ -2091,7 +2096,7 @@ class H(BaseHTTPRequestHandler):
                     if fee is None:
                         if rate is None:
                             return self.send(400, {'ok': False, 'error': 'rate'})
-                        fee = int(round(rate * int(S['late_full_pct' if d.get('kind') == 'full' else 'late_half_pct']) / 100.0))
+                        fee = r5(rate * int(S['late_full_pct' if d.get('kind') == 'full' else 'late_half_pct']) / 100.0)
                     if not 0 <= fee <= 100000:
                         return self.send(400, {'ok': False})
                     base = (cur['total'] or 0) - (cur['late_fee'] or 0)       # replaces an earlier late fee, never stacks
