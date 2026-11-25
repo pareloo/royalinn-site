@@ -70,6 +70,7 @@
       var r = roomsNeeded();
       return base + (r > 1 ? ' · ' + L.lrooms + ': ' + r : '');
     }
+    function pnl(per, total) { return (L.avgnight && per * nights() !== total) ? L.avgnight : L.pernight; }   // honest label when nights cost different amounts
     function arDigits(v) { return v.replace(/[٠-٩]/g, function (c) { return c.charCodeAt(0) - 1632; }).replace(/[۰-۹]/g, function (c) { return c.charCodeAt(0) - 1776; }); }
     function dropCombo() {
       var had = combo; combo = ''; comboName = ''; comboPrice = '';
@@ -121,7 +122,7 @@
               Object.keys(p.rooms).forEach(function (k) { var op = room.querySelector('option[value="' + k + '"]'); names.push(p.rooms[k] + ' × ' + (op ? op.textContent : k)); });
               combo = key; comboName = names.join(' + ');
               comboPrice = p.total ? L.ltotal + ' \u2066$' + p.total + '\u2069' : L.ask;
-              stat.textContent = (p.available ? '' : L.availNo + ' ') + (p.total ? money(p.per_night) + ' ' + L.pernight + ' · ' + comboPrice : L.ask);
+              stat.textContent = (p.available ? '' : L.availNo + ' ') + (p.total ? money(p.per_night) + ' ' + pnl(p.per_night, p.total) + ' · ' + comboPrice : L.ask);
               stat.className = 'pick-stat ' + (p.available ? 'ok' : 'full');
               Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-combo') === key ? 'true' : 'false'); });
               sum.textContent = partyLine(n); sum.hidden = false; wa.href = waUrl();
@@ -193,7 +194,7 @@
                 var t2 = d.createElement('small'); t2.textContent = L.upto.replace('{n}', r.cap) + (r.left != null && r.left <= 3 ? ' · ' + L.lleft.replace('{n}', r.left) : ''); nm.appendChild(t2);
                 var pr = d.createElement('span'); pr.className = 'opt-price';
                 if (r.total) {
-                  var a1 = d.createElement('b'); a1.textContent = money(5 * Math.round(r.total / n / 5)); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + L.pernight));
+                  var a1 = d.createElement('b'); var pn1 = 5 * Math.round(r.total / n / 5); a1.textContent = money(pn1); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + pnl(pn1, r.total)));
                   var a2 = d.createElement('small'); a2.textContent = L.ltotal + ' \u2066$' + r.total + '\u2069' + (r.base_total ? ' (' + L.ofOff.replace('{p}', r.offer_percent) + ')' : ''); pr.appendChild(a2);
                 } else { pr.textContent = L.ask; }
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul1.appendChild(li);
@@ -214,7 +215,7 @@
                 nm.setAttribute('data-label', parts.join(' + '));            // in the page's own language
                 var pr = d.createElement('span'); pr.className = 'opt-price';
                 if (o.total) {
-                  var a1 = d.createElement('b'); a1.textContent = money(o.per_night); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + L.pernight));
+                  var a1 = d.createElement('b'); a1.textContent = money(o.per_night); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + pnl(o.per_night, o.total)));
                   var a2 = d.createElement('small');
                   a2.textContent = L.ltotal + ' ' + (o.base_total ? '' : '') + '\u2066$' + o.total + '\u2069' + (o.base_total ? ' (' + L.ofOff.replace('{p}', o.offer_percent) + ')' : '');
                   pr.appendChild(a2);

@@ -25,7 +25,7 @@ Panel:    POST /api/admin/login | /api/admin/logout
 The panel password comes from the PANEL_PASSWORD environment variable; without it the panel stays locked.
 Optional e-mail notice for each new request: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, NOTIFY_TO.
 """
-import csv, datetime as dt, hashlib, hmac, io, json, os, re, secrets, smtplib, sqlite3, threading, time
+import csv, datetime as dt, hashlib, hmac, io, json, math, os, re, secrets, smtplib, sqlite3, threading, time
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -93,7 +93,7 @@ def units(b):
 
 def r5(x):
     """Money the guest sees or pays: whole dollars to the nearest 5, no small change (hotel, 25 Nov 2026)."""
-    return int(5 * round(x / 5.0))
+    return int(5 * math.floor(x / 5.0 + 0.5))      # halves round up (112.5 -> 115), like the site's own Math.round
 
 
 def held(u):
@@ -1794,9 +1794,11 @@ class H(BaseHTTPRequestHandler):
             pw = os.environ.get('PANEL_PASSWORD', '')
             if not pw:
                 return self.send(503, {'ok': False, 'error': 'not_configured'})
-            if limited('login:' + self.ip(), 6, 900):
+            t0 = time.time()      # only wrong passwords count: several staff devices behind the hotel's one address can all sign in
+            if len([x for x in HITS.get('login:' + self.ip(), []) if t0 - x < 900]) >= 8:
                 return self.send(429, {'ok': False, 'error': 'busy'})
             if not hmac.compare_digest(str(d.get('password', '')).encode(), pw.encode()):
+                limited('login:' + self.ip(), 8, 900)
                 time.sleep(1)
                 return self.send(401, {'ok': False, 'error': 'password'})
             tok = sign({'exp': int(time.time()) + SESSION_HOURS * 3600, 'pw': hashlib.sha256(pw.encode()).hexdigest()[:16], 'n': secrets.token_hex(4)})
