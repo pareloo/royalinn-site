@@ -89,7 +89,7 @@
     function waUrl(ref) { return 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text(ref)); }
     function money(n) { return '\u2066$' + n + '\u2069'; }   // keeps '$580' whole inside Arabic text
     /* choose rooms yourself: a stepper per room type, priced by the server for the exact mix */
-    var pickState = {}, pickTimer = 0, pickRefresh = null;
+    var pickState = {}, pickTimer = 0, pickRefresh = null, pickOpen = false;
     function picker(j, n) {
       var box2 = d.createElement('div'); box2.className = 'picker';
       var h = d.createElement('p'); h.className = 'opt-h'; h.textContent = L.pickh; box2.appendChild(h);
@@ -169,7 +169,28 @@
             if (room.value && list[0] && list[0].left !== null && list[0].left <= 3) {
               avail.appendChild(d.createTextNode(' ' + L.left.replace('{n}', list[0].left)));
             }
-            if (!room.value) {
+            var g0 = +guests.value;
+            var single = room.value ? [] : j.rooms.filter(function (r) { return r.available && r.rooms === 1 && g0 >= (r.min || 1) && g0 <= r.cap; });
+            if (!room.value && single.length) {
+              // the party fits in one room: list only the room types made for that many guests, like a hotel booking engine
+              dropCombo();
+              single.sort(function (a, b) { return (a.total == null) - (b.total == null) || (a.total || 0) - (b.total || 0); });
+              var sh1 = d.createElement('p'); sh1.className = 'opt-h'; sh1.textContent = L.fith.replace('{g}', g0); avail.appendChild(sh1);
+              var ul1 = d.createElement('ul'); ul1.className = 'book-opts';
+              single.forEach(function (r) {
+                var li = d.createElement('li'), bt = d.createElement('button'); bt.type = 'button'; bt.setAttribute('data-pick', r.id);
+                var op = room.querySelector('option[value="' + r.id + '"]'), nm = d.createElement('span'); nm.className = 'opt-name';
+                var t1 = d.createElement('span'); t1.textContent = op ? op.textContent : r.id; nm.appendChild(t1);
+                var t2 = d.createElement('small'); t2.textContent = L.upto.replace('{n}', r.cap) + (r.left != null && r.left <= 3 ? ' · ' + L.lleft.replace('{n}', r.left) : ''); nm.appendChild(t2);
+                var pr = d.createElement('span'); pr.className = 'opt-price';
+                if (r.total) {
+                  var a1 = d.createElement('b'); a1.textContent = money(5 * Math.round(r.total / n / 5)); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + L.pernight));
+                  var a2 = d.createElement('small'); a2.textContent = L.ltotal + ' \u2066$' + r.total + '\u2069' + (r.base_total ? ' (' + L.ofOff.replace('{p}', r.offer_percent) + ')' : ''); pr.appendChild(a2);
+                } else { pr.textContent = L.ask; }
+                bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul1.appendChild(li);
+              });
+              avail.appendChild(ul1);
+            } else if (!room.value) {
               var ul = d.createElement('ul'); ul.className = 'book-opts';
               var opts = j.options || [];
               if (combo && !opts.some(function (o) { return JSON.stringify(o.rooms) === combo; })) { dropCombo(); }
@@ -194,7 +215,10 @@
               });
               if (ul.children.length) { var sh = d.createElement('p'); sh.className = 'opt-h'; sh.textContent = L.sugh; avail.appendChild(sh); }
               avail.appendChild(ul);
-              avail.appendChild(picker(j, n));
+              var pk = picker(j, n), tg = d.createElement('button'); tg.type = 'button'; tg.className = 'pick-toggle'; tg.textContent = L.picktoggle;
+              pk.hidden = !pickOpen; tg.setAttribute('aria-expanded', pickOpen ? 'true' : 'false');
+              tg.addEventListener('click', function () { pickOpen = !pickOpen; pk.hidden = !pickOpen; tg.setAttribute('aria-expanded', pickOpen ? 'true' : 'false'); });
+              avail.appendChild(tg); avail.appendChild(pk);
               var keep = combo && ul.querySelector('[data-combo=\'' + combo + '\']');
               if (keep) { var ps = keep.querySelector('.opt-price small'); comboPrice = ps ? ps.textContent : ''; sum.textContent = partyLine(n); sum.hidden = false; }
             }
@@ -217,7 +241,16 @@
     });
     var note = d.createElement('p'); note.className = 'book-note'; note.hidden = true; note.textContent = L.roomsnote;
     var rl = room.closest('label'); rl.parentNode.insertBefore(note, rl.nextSibling);
-    function showNote() { note.hidden = roomsNeeded() < 2; }
+    function showNote() {
+      note.hidden = roomsNeeded() < 2;
+      var g = +guests.value;
+      Array.prototype.forEach.call(room.options, function (o) {
+        if (!o.value) { return; }
+        var mx = +o.getAttribute('data-max') || 2, mn = +o.getAttribute('data-min') || 1, k = Math.ceil(g / mx);
+        o.disabled = g < k * mn;                                   // e.g. a Triple Room is not offered to one guest
+      });
+      if (room.value && room.options[room.selectedIndex].disabled) { room.value = ''; }
+    }
     showNote();
     function update() {
       showNote();
@@ -299,6 +332,8 @@
   /* room prices: the hotel can change them in its panel, so the page refreshes them from the server.
      While an offer open to one-night stays runs today, every price shows the two-guest rate before and after the discount. */
   var TWO = { ar: 'لشخصين', en: 'for two', tr: '2 kişi' }[root.lang] || 'for two';
+  var OCC = { triple: { ar: 'لـ3 أشخاص', en: 'for three', tr: '3 kişi' }, 'royal-family': { ar: 'حتى 4 أشخاص', en: 'up to four', tr: 'en fazla 4 kişi' } };
+  function occ(id) { return (OCC[id] && OCC[id][root.lang]) || TWO; }        // whom the price is for
   function twoRate(rooms, id) {                                  // price per night for two guests, as the booking server counts it
     var p = rooms[id === 'royal-family' ? 'royal-suite' : id], sd = rooms.standard; if (!p || p.price == null) { return null; }
     if (id === 'standard') { return p.price2 || p.price; }
@@ -328,7 +363,7 @@
           var was = d.createElement('s'); was.className = 'ltr was'; was.textContent = '$' + r2;
           var now = d.createElement('b'); now.className = 'ltr'; now.textContent = '$' + off5(r2, off.percent);
           t.appendChild(was); t.appendChild(d.createTextNode(' ')); t.appendChild(now);
-          t.appendChild(d.createTextNode(' ' + TWO + (per ? ' ' + per : '')));
+          t.appendChild(d.createTextNode(' ' + occ(id) + (per ? ' ' + per : '')));
           return;
         }
         var p1 = p.price, p2 = p.price2, sd = j.rooms.standard;
@@ -534,7 +569,7 @@
               var r2 = twoRate(pd.rooms, id); if (r2 == null) { return; }
               var op = sel && sel.querySelector('option[value="' + id + '"]');
               var li = d.createElement('li'), nm = d.createElement('span'), pr = d.createElement('span');
-              nm.textContent = (op ? op.textContent : id) + ' · ' + TWO;
+              nm.textContent = (op ? op.textContent : id) + ' · ' + occ(id);
               var s0 = d.createElement('s'); s0.className = 'ltr'; s0.textContent = '$' + r2;
               var b0 = d.createElement('b'); b0.className = 'ltr'; b0.textContent = '$' + off5(r2, o.percent);
               pr.appendChild(s0); pr.appendChild(d.createTextNode(' ')); pr.appendChild(b0);

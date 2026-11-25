@@ -47,6 +47,14 @@ UNIT_TYPES = ('standard', 'triple', 'junior-suite', 'royal-suite')   # physical 
 CONNECT = 'royal-connect'
 # most guests per room type (hotel, Nov 2026); the Royal Suite counts with its connecting room
 MAX_GUESTS = {'standard': 2, 'triple': 3, 'junior-suite': 2, 'royal-suite': 2, 'royal-family': 4}
+# fewest guests a room is sold to (hotel, 25 Nov 2026): the Triple Room is for three; the suite with its connecting room for three or four
+MIN_GUESTS = {'triple': 3, 'royal-family': 3}
+
+
+def type_fits(room, guests):
+    """Can the party take rooms of this one type? Enough rooms for everyone, and each room with at least its minimum."""
+    n = rooms_needed(room, guests)
+    return guests >= n * MIN_GUESTS.get(room, 1)
 MAX_ANY = max(MAX_GUESTS.values())
 
 
@@ -112,14 +120,14 @@ def parse_combo(raw, guests):
             return None
     except (ValueError, TypeError, AttributeError):
         return None
-    if not c or any(k not in ROOMS for k in c) or sum(c.values()) > guests or sum(MAX_GUESTS[k] * n for k, n in c.items()) < guests:
+    if not c or any(k not in ROOMS for k in c) or sum(MIN_GUESTS.get(k, 1) * n for k, n in c.items()) > guests or sum(MAX_GUESTS[k] * n for k, n in c.items()) < guests:
         return None
     return c      # every room holds at least one guest; guests may each take their own room
 
 
 def allocate(combo, guests):
     """Guests per room for a combination: one guest in every room first, then the rest where it adds least to the price."""
-    rooms = [[k, 1] for k, n in sorted(combo.items()) for _ in range(n)]
+    rooms = [[k, MIN_GUESTS.get(k, 1)] for k, n in sorted(combo.items()) for _ in range(n)]
     left = guests - len(rooms)
     # rooms whose price does not change with more guests fill first; Standard rooms (single/double rate) last
     order = sorted(range(len(rooms)), key=lambda i: (rooms[i][0] == 'standard', rooms[i][0] == FAMILY))
@@ -208,7 +216,7 @@ def suggest(con, a, b, guests, limit=4):
     for k in types:                        # a suite on request, alone, when it fits the party
         if k not in priced and MAX_GUESTS[k] >= guests and None in _one_room(con, k, 1, nights[:1]) and not any(_one_room(con, k, 1, nights)):
             found.append({k: 1})
-    found = [c for c in found if combo_free(con, a, b, c)]
+    found = [c for c in found if sum(MIN_GUESTS.get(k, 1) * n for k, n in c.items()) <= guests and combo_free(con, a, b, c)]
     opts = []
     for c in found:
         base = combo_nightly(con, c, guests, nights, memo)
@@ -489,7 +497,7 @@ def quote(con, a, b, guests, room=None):
         base_total = None if any(x is None for x in base) else sum(base)
         one, _p1 = discounted(con, _one_room(con, k, min(MAX_GUESTS[k], 2), nights), nights)
         out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k, need=need), 'rooms': need,
-                    'cap': MAX_GUESTS[k], 'one_night': None if None in one else r5(sum(one) / len(nights)),
+                    'cap': MAX_GUESTS[k], 'min': MIN_GUESTS.get(k, 1), 'fits': type_fits(k, guests), 'one_night': None if None in one else r5(sum(one) / len(nights)),
                     'left': left(con, k, nights), 'total': total, 'nightly': per,
                     'base_total': base_total if pct and base_total != total else None, 'offer_percent': pct if base_total != total else None})
     return out
@@ -530,6 +538,8 @@ def validate_booking(d):
     if not 1 <= guests <= MAX_PARTY:
         errs.append('guests')
     lang = 'en' if d.get('lang') in ('en', 'tr') else 'ar'   # Turkish visitors get English letters and mails
+    if room in ROOMS and not d.get('combo') and not type_fits(room, guests):
+        errs.append('room')            # e.g. a Triple Room for one guest
     combo = None
     if d.get('combo'):
         combo = parse_combo(d.get('combo'), guests)
