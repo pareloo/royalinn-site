@@ -97,10 +97,7 @@ def parse_combo(raw, guests):
         return None
     if not c or any(k not in ROOMS for k in c) or sum(c.values()) > guests or sum(MAX_GUESTS[k] * n for k, n in c.items()) < guests:
         return None
-    # no room may be left without its own guest once the others are full: drop combos with a spare room
-    if any(sum(MAX_GUESTS[j] * m for j, m in c.items()) - MAX_GUESTS[k] >= guests for k in c):
-        return None
-    return c
+    return c      # every room holds at least one guest; guests may each take their own room
 
 
 def allocate(combo, guests):
@@ -215,6 +212,12 @@ def suggest(con, a, b, guests, limit=4):
         if len(out) >= limit + 1:
             break
     return out[:limit + 1]
+
+
+def free_units_safe(a, b):
+    with db() as con:
+        shut = closed(con, a, b); f = free_units(con, a, b)
+    return {k: (0 if ('*' in shut or k in shut) else v) for k, v in f.items()}
 
 
 def party_ar(b):
@@ -438,7 +441,9 @@ def quote(con, a, b, guests, room=None):
         per, pct = discounted(con, base, nights)
         total = None if any(x is None for x in per) else sum(per)
         base_total = None if any(x is None for x in base) else sum(base)
+        one, _p1 = discounted(con, _one_room(con, k, min(MAX_GUESTS[k], 2), nights), nights)
         out.append({'id': k, 'name_en': names[0], 'name_ar': names[1], 'available': availability(con, a, b, k, need=need), 'rooms': need,
+                    'cap': MAX_GUESTS[k], 'one_night': None if None in one else int(round(sum(one) / len(nights))),
                     'left': left(con, k, nights), 'total': total, 'nightly': per,
                     'base_total': base_total if pct and base_total != total else None, 'offer_percent': pct if base_total != total else None})
     return out
@@ -1441,8 +1446,20 @@ class H(BaseHTTPRequestHandler):
             with db() as con:
                 rooms = quote(con, dates[0], dates[1], guests, room)
                 options = [] if room else suggest(con, dates[0], dates[1], guests)
+                pick = None
+                if q.get('combo'):
+                    c = parse_combo(q.get('combo'), guests)
+                    if c:
+                        ns = [dates[0] + dt.timedelta(days=i) for i in range((dates[1] - dates[0]).days)]
+                        base = combo_nightly(con, c, guests, ns); per, pct = discounted(con, base, ns)
+                        tot = None if None in per else sum(per)
+                        pick = {'rooms': c, 'total': tot, 'per_night': None if tot is None else int(round(tot / len(ns))),
+                                'available': combo_free(con, dates[0], dates[1], c), 'count': sum(c.values())}
+                    else:
+                        pick = {'invalid': True}
                 any_open = bool(options) if not room else availability(con, dates[0], dates[1], None)
-            return self.send(200, {'ok': True, 'nights': (dates[1] - dates[0]).days, 'open': any_open, 'rooms': rooms, 'options': options, 'breakfast': BREAKFAST})
+            return self.send(200, {'ok': True, 'nights': (dates[1] - dates[0]).days, 'open': any_open, 'rooms': rooms, 'options': options, 'pick': pick,
+                                   'free': free_units_safe(dates[0], dates[1]), 'breakfast': BREAKFAST})
         if p == '/api/booking/status':
             # a guest checks their own request: booking number + last four digits of the phone they gave
             if limited('st:' + self.ip(), 12, 600):

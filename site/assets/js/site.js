@@ -88,6 +88,64 @@
     }
     function waUrl(ref) { return 'https://wa.me/' + L.wa + '?text=' + encodeURIComponent(text(ref)); }
     function money(n) { return '\u2066$' + n + '\u2069'; }   // keeps '$580' whole inside Arabic text
+    /* choose rooms yourself: a stepper per room type, priced by the server for the exact mix */
+    var pickState = {}, pickTimer = 0, pickRefresh = null;
+    function picker(j, n) {
+      var box2 = d.createElement('div'); box2.className = 'picker';
+      var h = d.createElement('p'); h.className = 'opt-h'; h.textContent = L.pickh; box2.appendChild(h);
+      var g = +guests.value, stat = d.createElement('p'); stat.className = 'pick-stat';
+      function capNow() { return j.rooms.reduce(function (a, r) { return a + (pickState[r.id] || 0) * r.cap; }, 0); }
+      function count() { return Object.keys(pickState).reduce(function (a, k) { return a + (pickState[k] || 0); }, 0); }
+      function refresh() {
+        var c = capNow(), m = count();
+        stat.textContent = L.pickcap.replace('{c}', c).replace('{g}', g);
+        stat.className = 'pick-stat' + (c >= g && m <= g && m > 0 ? ' ok' : '');
+        Array.prototype.forEach.call(box2.querySelectorAll('[data-step]'), function (b) {
+          var id = b.getAttribute('data-id'), v = pickState[id] || 0, mx = +b.getAttribute('data-max');
+          if (b.getAttribute('data-step') === '1') { b.disabled = v >= mx || m >= g; } else { b.disabled = v <= 0; }
+          var out = box2.querySelector('[data-val="' + id + '"]'); if (out) { out.textContent = v; }
+        });
+        clearTimeout(pickTimer);
+        if (!(c >= g && m <= g && m > 0)) { if (combo && combo === pickKey()) { dropCombo(); sum.textContent = partyLine(n); } return; }
+        pickTimer = setTimeout(function () {
+          var key = pickKey();
+          fetch(api + 'quote?in=' + ci.value + '&out=' + co.value + '&guests=' + guests.value + '&combo=' + encodeURIComponent(key), { credentials: 'omit' })
+            .then(function (r) { return r.json(); }).then(function (q) {
+              if (!q.ok || !q.pick || q.pick.invalid || key !== pickKey()) { return; }
+              var p = q.pick, names = [];
+              Object.keys(p.rooms).forEach(function (k) { var op = room.querySelector('option[value="' + k + '"]'); names.push(p.rooms[k] + ' × ' + (op ? op.textContent : k)); });
+              combo = key; comboName = names.join(' + ');
+              comboPrice = p.total ? L.ltotal + ' \u2066$' + p.total + '\u2069' : L.ask;
+              stat.textContent = (p.available ? '' : L.availNo + ' ') + (p.total ? money(p.per_night) + ' ' + L.pernight + ' · ' + comboPrice : L.ask);
+              stat.className = 'pick-stat ' + (p.available ? 'ok' : 'full');
+              Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-combo') === key ? 'true' : 'false'); });
+              sum.textContent = partyLine(n); sum.hidden = false; wa.href = waUrl();
+            }).catch(function () {});
+        }, 250);
+      }
+      function pickKey() { var o = {}; Object.keys(pickState).sort().forEach(function (k) { if (pickState[k] > 0) { o[k] = pickState[k]; } }); return JSON.stringify(o); }
+      j.rooms.forEach(function (r) {
+        var free = j.free && j.free[r.id] != null ? j.free[r.id] : g, mx = Math.min(free, g);
+        if (pickState[r.id] > mx) { pickState[r.id] = mx; }
+        var row = d.createElement('div'); row.className = 'pick-row' + (mx <= 0 ? ' off' : '');
+        var op = room.querySelector('option[value="' + r.id + '"]');
+        var info = d.createElement('div'), nm = d.createElement('b'), sub = d.createElement('small');
+        nm.textContent = op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en);
+        sub.textContent = L.upto.replace('{n}', r.cap) + ' · ' + (r.one_night ? money(r.one_night) + ' ' + L.pernight : L.ask) + (free < 3 && free > 0 && free !== g ? ' · ' + L.lleft.replace('{n}', free) : '');
+        info.appendChild(nm); info.appendChild(sub);
+        var st = d.createElement('div'); st.className = 'stepper';
+        [['-1', '−'], ['0', ''], ['1', '+']].forEach(function (x) {
+          if (x[0] === '0') { var v = d.createElement('output'); v.setAttribute('data-val', r.id); v.textContent = pickState[r.id] || 0; st.appendChild(v); return; }
+          var b = d.createElement('button'); b.type = 'button'; b.textContent = x[1]; b.setAttribute('data-step', x[0]); b.setAttribute('data-id', r.id); b.setAttribute('data-max', mx);
+          b.setAttribute('aria-label', (x[0] === '1' ? '+ ' : '− ') + nm.textContent);
+          b.addEventListener('click', function () { pickState[r.id] = Math.max(0, (pickState[r.id] || 0) + +x[0]); refresh(); });
+          st.appendChild(b);
+        });
+        row.appendChild(info); row.appendChild(st); box2.appendChild(row);
+      });
+      box2.appendChild(stat); pickRefresh = refresh; refresh();
+      return box2;
+    }
     function checkAvail() {
       var n = nights(), key = ci.value + '|' + co.value + '|' + room.value + '|' + guests.value;
       if (!api || n <= 0 || !window.fetch) { avail.hidden = true; lastCheck = ''; return; }
@@ -134,7 +192,9 @@
                 if (i === 0 && o.total) { var tag = d.createElement('em'); tag.textContent = L.lowest; nm.appendChild(tag); }
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
               });
+              if (ul.children.length) { var sh = d.createElement('p'); sh.className = 'opt-h'; sh.textContent = L.sugh; avail.appendChild(sh); }
               avail.appendChild(ul);
+              avail.appendChild(picker(j, n));
               var keep = combo && ul.querySelector('[data-combo=\'' + combo + '\']');
               if (keep) { var ps = keep.querySelector('.opt-price small'); comboPrice = ps ? ps.textContent : ''; sum.textContent = partyLine(n); sum.hidden = false; }
             }
@@ -148,6 +208,8 @@
       var cb = e.target.closest && e.target.closest('[data-combo]');
       if (cb) {
         combo = cb.getAttribute('data-combo'); comboName = cb.querySelector('.opt-name').getAttribute('data-label');
+        pickState = JSON.parse(combo);
+        if (pickRefresh) { pickRefresh(); }
         Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x === cb ? 'true' : 'false'); });
         var pr = cb.querySelector('.opt-price small'); comboPrice = pr ? pr.textContent : '';
         sum.textContent = partyLine(nights()); sum.hidden = false; wa.href = waUrl();
