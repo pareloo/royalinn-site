@@ -26,7 +26,7 @@ COPY nginx.conf /etc/nginx/conf.d/royalinn.conf
 COPY site/ /usr/share/nginx/html/
 COPY --from=fonts /f/g/ /usr/share/nginx/html/assets/fonts/g/
 COPY --from=fonts /f/fonts-g.css /usr/share/nginx/html/assets/css/fonts-g.css
-COPY app/api.py /app/api.py
+COPY app/api.py app/rooms.json /app/
 COPY start.sh /start.sh
 RUN chmod 755 /start.sh && python3 -m py_compile /app/api.py
 VOLUME /data

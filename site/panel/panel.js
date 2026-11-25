@@ -57,9 +57,9 @@
   function load() {
     var list = tab === 'new' || tab === 'active' || tab === 'all';
     $('#view-list').hidden = !list;
-    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'offers', 'agencies', 'rack', 'rules', 'inq'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
+    ['home', 'closures', 'inventory', 'occupancy', 'add', 'prices', 'roominfo', 'offers', 'agencies', 'rack', 'rules', 'inq'].forEach(function (v) { $('#view-' + v).hidden = tab !== v; });
     if (list) loadList(); else if (tab === 'home') loadHome(); else if (tab === 'closures') loadClosures(); else if (tab === 'inventory') loadInventory();
-    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'rack') { rooms(); loadRack(); } else if (tab === 'rules') loadRules(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers(); else if (tab === 'inq') loadInq();
+    else if (tab === 'occupancy') loadOcc(); else if (tab === 'add') { rooms(); agencies(); } else if (tab === 'agencies') loadAgencies(); else if (tab === 'rack') { rooms(); loadRack(); } else if (tab === 'rules') loadRules(); else if (tab === 'prices') loadPrices(); else if (tab === 'offers') loadOffers(); else if (tab === 'roominfo') loadRoomInfo(); else if (tab === 'inq') loadInq();
     inqBadge();
   }
 
@@ -209,7 +209,7 @@
       RULES = j.rules || RULES; deskAlerts(j);
       var fr = $('#home-free'); fr.textContent = '';
       $('#free-hint').textContent = j.units_free.length ? 'غرف غير مشغولة وغير محجوزة اليوم. الرمادي يحتاج تنظيفاً أولاً.' : 'تظهر هنا أرقام الغرف المتاحة بعد إضافة أرقام الغرف من «الغرف».';
-      j.units_free.forEach(function (u) { fr.appendChild(el('span', 'chip' + (u.state === 'dirty' ? ' dirty' : ''), u.no + ' · ' + roomName(u.room))); });
+      j.units_free.forEach(function (u) { fr.appendChild(el('span', 'chip' + (u.state === 'dirty' ? ' dirty' : ''), u.no + ' · ' + roomName(u.room) + (u.view ? ' · ' + VIEWS[u.view] : ''))); });
       var k = $('#kpis'); k.textContent = '';
       k.appendChild(kpi(j.counts['new'] || 0, 'طلبات جديدة تنتظر الرد', (j.counts['new'] ? 'hot' : ''), 'new'));
       k.appendChild(kpi(j.arrivals.length, 'وصول اليوم'));
@@ -314,8 +314,8 @@
       var hint = el('small', 'muted'); l1.appendChild(hint);
       roomNo.addEventListener('focus', function () { if (dl.loaded) return; dl.loaded = 1; api('units/free?in=' + b.check_in + '&out=' + b.check_out + '&ref=' + b.ref + (b.room ? '&room=' + b.room : '')).then(function (j) {
         if (!j.ok || !j.defined) return; var same = j.free.filter(function (u) { return u.match; });
-        (same.length ? same : j.free).forEach(function (u) { var o = el('option'); o.value = u.no; o.label = roomName(u.room) + (u.state === 'dirty' ? ' · تحتاج تنظيف' : ''); dl.appendChild(o); });
-        hint.textContent = same.length ? 'المتاح: ' + same.map(function (u) { return u.no; }).slice(0, 12).join('، ') : 'لا غرف متاحة من هذا النوع في هذه التواريخ'; }); });
+        (same.length ? same : j.free).forEach(function (u) { var o = el('option'); o.value = u.no; o.label = roomName(u.room) + (u.view ? ' · ' + VIEWS[u.view] : '') + (u.state === 'dirty' ? ' · تحتاج تنظيف' : ''); dl.appendChild(o); });
+        hint.textContent = same.length ? 'المتاح: ' + same.map(function (u) { return u.no + (u.view ? ' (' + VIEWS[u.view] + ')' : ''); }).slice(0, 12).join('، ') : 'لا غرف متاحة من هذا النوع في هذه التواريخ'; }); });
       var l2 = el('label', null, 'المدفوع $'); paid = el('input'); paid.type = 'number'; paid.min = 0; paid.inputMode = 'numeric'; paid.value = b.paid == null ? '' : b.paid; l2.appendChild(paid); desk.appendChild(l2);
       var l4 = el('label', null, 'الوكالة'); agSel = el('select'); var o0 = el('option', null, 'بدون وكالة'); o0.value = ''; agSel.appendChild(o0);
       AGS.forEach(function (a) { var o = el('option', null, a.name); o.value = a.id; agSel.appendChild(o); }); agSel.value = b.agency_id || ''; l4.appendChild(agSel); desk.appendChild(l4);
@@ -640,6 +640,11 @@
           else if (u.clean === 'clean' && !u.guest) b('تحتاج تنظيف', { state: 'dirty' });
           if (u.clean === 'out') b('إعادة للخدمة', { state: 'clean' }); else if (!u.guest) { b('خارج الخدمة', { state: 'out' }); b('حذف', {}, true); }
           t.appendChild(row);
+          // the room's view, so the desk can give a sea view to whoever asked for one
+          var vs = el('select', 'sm u-view'); vs.setAttribute('aria-label', 'إطلالة الغرفة ' + u.no); vs.appendChild(new Option('الإطلالة؟', ''));
+          Object.keys(VIEWS).forEach(function (k) { vs.appendChild(new Option(VIEWS[k], k, false, k === u.view)); });
+          vs.addEventListener('change', function () { api('units/' + u.id, { view: vs.value }).then(function (j) { if (j.ok) toast('حُفظت إطلالة الغرفة ' + u.no); }); });
+          t.appendChild(vs);
           if (u.room === 'royal-connect') {
             // a connecting room: merged with its suite (sold as "Royal Suite with connecting room") or sold as a Standard room
             var mg = el('div', 'u-merge');
@@ -661,10 +666,45 @@
   $('#rack-today').addEventListener('click', function () { $('#rack-date').value = iso(new Date()); loadRack(); });
   $('#unit-form').addEventListener('submit', function (e) {
     e.preventDefault(); var f = e.target;
-    api('units', { no: f.no.value, to: f.to.value, room: f.room.value, floor: f.floor.value }).then(function (j) {
+    api('units', { no: f.no.value, to: f.to.value, room: f.room.value, floor: f.floor.value, view: f.view.value }).then(function (j) {
       if (j.ok) { toast('أُضيفت ' + j.added + ' غرفة' + (j.skipped ? ' · موجودة مسبقاً: ' + j.skipped : '')); f.no.value = ''; f.to.value = ''; loadRack(); } else if (!gone(j) && j.status) toast('تحقّق من الأرقام ونوع الغرفة');
     });
   });
+
+  /* ---------------------------------------------------------------- room descriptions shown on the website and in the booking form */
+  var RDEF = null;
+  function loadRoomInfo() {
+    var box = $('#ri-rows'); box.textContent = '';
+    var defs = RDEF ? Promise.resolve(RDEF) : fetch('/assets/data/rooms.json').then(function (r) { return r.json(); }).then(function (j) { RDEF = j; return j; }).catch(function () { return {}; });
+    Promise.all([defs, api('room-info')]).then(function (res) {
+      var D = res[0] || {}, j = res[1];
+      if (gone(j) || !j.rooms) return;
+      j.rooms.forEach(function (r) {
+        var d = D[r.id] || {}, c = el('form', 'card ri');
+        var hd = el('div', 'ri-head');
+        if (d.img && d.img[0]) { var im = el('img'); im.src = '/assets/img/' + d.img[0] + '-360.webp'; im.alt = ''; im.width = 120; im.height = 90; im.loading = 'lazy'; hd.appendChild(im); }
+        var tt = el('div'); tt.appendChild(el('h2', null, r.name));
+        tt.appendChild(el('span', 'muted small', (r.ar || r.en || r.tr) ? 'نص الفندق ظاهر الآن على الموقع' : 'يظهر الآن نص الموقع الأصلي'));
+        hd.appendChild(tt); c.appendChild(hd);
+        [['ar', 'العربية'], ['en', 'English'], ['tr', 'Türkçe']].forEach(function (L) {
+          var lb = el('label', null, L[1]), ta = el('textarea'); ta.name = L[0]; ta.rows = 3; ta.maxLength = 600;
+          ta.dir = L[0] === 'ar' ? 'rtl' : 'ltr'; ta.value = r[L[0]] || (d[L[0]] && d[L[0]].desc) || '';
+          lb.appendChild(ta); c.appendChild(lb);
+        });
+        var bt = el('div', 'btns'), sv = el('button', 'gold', 'حفظ'), rs = el('button', 'ghost', 'إرجاع نص الموقع الأصلي'); sv.type = 'submit'; rs.type = 'button';
+        rs.addEventListener('click', function () {
+          if (!confirm('إرجاع وصف «' + r.name + '» إلى نص الموقع الأصلي؟')) return;
+          api('room-info', { room: r.id, ar: '', en: '', tr: '' }).then(function (x) { if (x.ok) { toast('عاد النص الأصلي'); loadRoomInfo(); } });
+        });
+        c.addEventListener('submit', function (e) {
+          e.preventDefault(); var data = { room: r.id };
+          ['ar', 'en', 'tr'].forEach(function (k) { var v = c[k].value.trim(); data[k] = (d[k] && v === d[k].desc) ? '' : v; });   // unchanged text stays the site's own
+          api('room-info', data).then(function (x) { if (x.ok) { toast('حُفظ الوصف. يظهر على الموقع وفي نموذج الحجز خلال دقيقتين.'); loadRoomInfo(); } else if (!gone(x)) toast('لم يتم الحفظ'); });
+        });
+        bt.appendChild(sv); bt.appendChild(rs); c.appendChild(bt); box.appendChild(c);
+      });
+    });
+  }
 
   /* ---------------------------------------------------------------- hotel times and policies */
   function loadRules() {
@@ -770,6 +810,7 @@
   });
 
   /* ---------------------------------------------------------------- prices */
+var VIEWS = { sea: 'إطلالة على البحر', side: 'إطلالة جانبية', city: 'إطلالة على المدينة', none: 'بدون إطلالة' };
   function loadPrices() {
     rooms().then(function () { return api('prices'); }).then(function (j) {
       if (gone(j) || !j.rooms) return;

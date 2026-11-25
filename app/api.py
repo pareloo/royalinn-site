@@ -298,6 +298,7 @@ def init():
             id INTEGER PRIMARY KEY AUTOINCREMENT, percent INTEGER NOT NULL, title_ar TEXT, title_en TEXT,
             date_from TEXT NOT NULL, date_to TEXT NOT NULL, min_nights INTEGER NOT NULL DEFAULT 1, created TEXT);
         CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS room_info(room TEXT PRIMARY KEY, ar TEXT, en TEXT, tr TEXT, updated TEXT);
         CREATE TABLE IF NOT EXISTS units(
             id INTEGER PRIMARY KEY AUTOINCREMENT, no TEXT NOT NULL UNIQUE, room TEXT NOT NULL, floor TEXT, state TEXT NOT NULL DEFAULT 'clean', note TEXT);
         CREATE TABLE IF NOT EXISTS agencies(
@@ -317,7 +318,7 @@ def init():
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
         ucols = [r[1] for r in con.execute('PRAGMA table_info(units)')]
-        for c, t in (('pair', 'TEXT'), ('merge', 'INTEGER DEFAULT 1')):
+        for c, t in (('pair', 'TEXT'), ('merge', 'INTEGER DEFAULT 1'), ('view', 'TEXT')):
             if c not in ucols:
                 con.execute(f'ALTER TABLE units ADD COLUMN {c} {t}')
         # five room types (hotel, 25 Nov 2026): until now 'royal-suite' meant the suite with its connecting room
@@ -1161,6 +1162,31 @@ def export_book(con):
     return xlsx([('الحجوزات', cols, rows), ('الوكالات', acols, arows), ('دفعات الوكالات', pcols, prows), ('الغرف', ucols, urows)])
 
 
+VIEWS = {'sea': ('Sea view', 'إطلالة على البحر'), 'side': ('Side sea view', 'إطلالة جانبية على البحر'),
+         'city': ('City view', 'إطلالة على المدينة'), 'none': ('No view', 'بدون إطلالة')}
+
+
+def _room_defaults():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rooms.json'), encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+ROOM_DEFAULTS = _room_defaults()     # names, descriptions and photos the site build wrote next to this file
+
+
+def room_info(con):
+    """Room descriptions the hotel wrote in the panel, per type and language; empty ones fall back to the site's own text."""
+    out = {}
+    for r in con.execute('SELECT * FROM room_info'):
+        v = {k: r[k] for k in ('ar', 'en', 'tr') if r[k]}
+        if r['room'] in ROOMS and v:
+            out[r['room']] = v
+    return out
+
+
 def units_view(con, ds, free_only=False):
     """The room rack for one day: every numbered room with who is in it, who arrives and who leaves."""
     out = []
@@ -1172,10 +1198,10 @@ def units_view(con, ds, free_only=False):
         st = 'out' if u['state'] == 'out' else 'occupied' if (stay and stay['arrived']) else 'arriving' if stay else 'leaving' if leave else ('dirty' if u['state'] == 'dirty' else 'free')
         if free_only:
             if st in ('free', 'dirty'):
-                out.append({'no': u['no'], 'room': u['room'], 'state': st})
+                out.append({'no': u['no'], 'room': u['room'], 'state': st, 'view': _g(u, 'view')})
             continue
         g = stay or leave
-        out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': NAMES.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'],
+        out.append({'id': u['id'], 'no': u['no'], 'room': u['room'], 'room_name': NAMES.get(u['room'], ('', ''))[1], 'floor': u['floor'], 'state': st, 'clean': u['state'], 'note': u['note'], 'view': _g(u, 'view'),
                     'merge': (u['merge'] if u['merge'] is not None else 1) if u['room'] == CONNECT else None, 'pair': u['pair'] if u['room'] == CONNECT else None,
                     'leaving_today': bool(leave), 'guest': g['name'] if g else None, 'ref': g['ref'] if g else None,
                     'until': g['check_out'] if g else None, 'since': g['check_in'] if g else None})
@@ -1236,7 +1262,7 @@ def _fd(ds):
 def doc_head(lang, direction, title):
     return ('<!DOCTYPE html>\n<html lang="%s" dir="%s">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             '<meta name="robots" content="noindex, nofollow">\n<title>%s | Royal Inn Tartus</title>\n<link rel="icon" href="/favicon.ico">\n'
-            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=4">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
+            '<link rel="stylesheet" href="/assets/css/fonts-g.css?v=1">\n<link rel="stylesheet" href="/panel/letter.css?v=5">\n<script src="/panel/letter.js?v=1" defer></script>\n</head>\n<body>\n'
             % (lang, direction, _esc(title)))
 
 
@@ -1278,6 +1304,18 @@ def letter_html(r, S=None):
           else ['الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'])
     wd = lambda ds: dn[dt.date.fromisoformat(ds).weekday()]
     tile = lambda k, big, small, cls='': '<div class="tile %s"><span class="tl">%s</span><b dir="auto">%s</b><span class="ts">%s</span></div>' % (cls, lab(k), big, small)
+    # what was booked: photo and description of each room type (the hotel's own text from the panel, else the site's)
+    info = (S or {}).get('_rinfo') or {}; lk = 'en' if lang == 'en' else 'ar'
+    kinds = list(units(r).items()) or ([(r['room'], _g(r, 'rooms') or 1)] if _g(r, 'room') in ROOMS else [])
+    cards = ''
+    for k, n in kinds:
+        dfl = ROOM_DEFAULTS.get(k, {}); txt = (info.get(k) or {}).get(lk) or (dfl.get(lk) or {}).get('desc') or ''
+        im = (dfl.get('img') or [None])[0]
+        cards += ('<div class="lroom">%s<div><b>%s</b><p>%s</p></div></div>'
+                  % (('<img src="/assets/img/%s-360.jpg" alt="" width="120" height="90">' % e(im)) if im else '',
+                     e(((('%d × ' % n) if n > 1 else '') + NAMES.get(k, (k, k))[0 if lk == 'en' else 1])), e(txt)))
+    view = (S or {}).get('_view')
+    rooms_box = ('<div class="lrooms">%s%s</div>' % (cards, ('<p class="lview">%s: %s</p>' % (e(LBL['room_no'][i]) + ' ' + e(g('room_no')), e(VIEWS[view][0 if lk == 'en' else 1]))) if view in VIEWS else '')) if cards else ''
     strip = ('<div class="strip">' + tile('cin', _fd(r['check_in']), '%s · %s' % (e(wd(r['check_in'])), e(L['from14'])))
              + tile('cout', _fd(r['check_out']), '%s · %s' % (e(wd(r['check_out'])), e(L['until12'])))
              + tile('nights', r['nights'], '%s: %s' % (e(LBL['guests'][i]), r['guests']), 'num') + tile('room', e(room), ('%s: %s' % (e(LBL['room_no'][i]), e(g('room_no')))) if g('room_no') else e(L['yes'] if r['breakfast'] else L['no']), 'wide') + '</div>')
@@ -1320,7 +1358,7 @@ def letter_html(r, S=None):
                    else 'صدر هذا التأكيد إلكترونياً من نظام حجوزات الفندق، وهو صالح بدون توقيع.')))
     return (head + '<div class="tools"><button type="button" data-print>%s</button></div><main class="sheet letter">' % e(L['print']) + lh + hero
             + '<div class="pad"><p class="hello">%s</p><p>%s</p>' % (e(L['hello'].format(name=r['name'])), e(L['intro']))
-            + strip + '<div class="two">' + sec('res', res) + '<div>' + sec('rate', rate) + total_box + '</div></div>' + pol + signed + '</div>'
+            + strip + rooms_box + '<div class="two">' + sec('res', res) + '<div>' + sec('rate', rate) + total_box + '</div></div>' + pol + signed + '</div>'
             + '<footer class="lf2"><span>%s</span><span dir="ltr">%s</span></footer>' % (e(L['addr']), HOTEL['site']) + '</main>\n</body>\n</html>\n')
 
 
@@ -1466,7 +1504,10 @@ class H(BaseHTTPRequestHandler):
             if hmac.compare_digest(letter_key(m.group(1)), m.group(2)):
                 with db() as con:
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
-                    load_agencies(con); S = settings(con)
+                    load_agencies(con); S = dict(settings(con)); S['_rinfo'] = room_info(con)
+                    if r and r['room_no']:
+                        u = con.execute('SELECT view FROM units WHERE no=?', (r['room_no'],)).fetchone()
+                        S['_view'] = u['view'] if u else None
             return self.send(200 if r else 404, raw=letter_html(r, S if r else None).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'})
         m = re.fullmatch(r'/api/pricelist(?:/(\d+)/([0-9a-f]{20}))?', p)
         if m:
@@ -1502,6 +1543,9 @@ class H(BaseHTTPRequestHandler):
                 rows = con.execute('SELECT * FROM offers WHERE date_to >= ? ORDER BY percent DESC, date_from', (dt.date.today().isoformat(),)).fetchall()
             return self.send(200, {'ok': True, 'items': [{'percent': r['percent'], 'title_ar': r['title_ar'], 'title_en': r['title_en'],
                                                          'from': r['date_from'], 'to': r['date_to'], 'min_nights': r['min_nights']} for r in rows]})
+        if p == '/api/room-info':
+            with db() as con:
+                return self.send(200, {'ok': True, 'rooms': room_info(con)}, extra={'Cache-Control': 'public, max-age=120'})
         if p == '/api/prices':
             with db() as con:
                 rows = {r['room']: {'price': r['price'], 'price2': r['price2']} for r in con.execute('SELECT * FROM prices') if r['room'] in ROOMS}
@@ -1646,7 +1690,7 @@ class H(BaseHTTPRequestHandler):
                     if not a or not b or b <= a:
                         return self.send(400, {'ok': False})
                     us = con.execute("SELECT * FROM units WHERE state!='out' ORDER BY length(no), no").fetchall()
-                    free = [{'no': u['no'], 'room': u['room'], 'state': u['state'], 'match': (not q.get('room')) or u['room'] == q.get('room')}
+                    free = [{'no': u['no'], 'room': u['room'], 'state': u['state'], 'view': _g(u, 'view'), 'match': (not q.get('room')) or u['room'] == q.get('room')}
                             for u in us if not unit_busy(con, u['no'], a.isoformat(), b.isoformat(), q.get('ref'))]
                     return self.send(200, {'ok': True, 'defined': len(us) > 0, 'free': free})
                 if p == '/api/admin/closures':
@@ -1655,6 +1699,10 @@ class H(BaseHTTPRequestHandler):
                 if p == '/api/admin/inventory':
                     inv = {r['room']: r['count'] for r in con.execute('SELECT * FROM inventory')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'count': inv.get(k), 'max': MAX_GUESTS.get(k)} for k, v in ROOMS.items()]})
+                if p == '/api/admin/room-info':
+                    info = room_info(con)
+                    return self.send(200, {'ok': True, 'views': {k: v[1] for k, v in VIEWS.items()},
+                                           'rooms': [{'id': k, 'name': v[1], **info.get(k, {})} for k, v in ROOMS.items()]})
                 if p == '/api/admin/prices':
                     rows = {r['room']: r for r in con.execute('SELECT * FROM prices')}
                     return self.send(200, {'ok': True, 'rooms': [{'id': k, 'name': v[1], 'price': rows[k]['price'] if k in rows else None,
@@ -1865,6 +1913,16 @@ class H(BaseHTTPRequestHandler):
                 if mailed:
                     threading.Thread(target=mail_confirmation, args=(dict(r), S), daemon=True).start()
                 return self.send(200, {'ok': True, 'ref': ref, 'mailed': mailed})
+            if p == '/api/admin/room-info':
+                # {room, ar, en, tr}: the hotel's own description of a room type; an empty text goes back to the site's text
+                k = d.get('room')
+                if k not in ROOMS:
+                    return self.send(400, {'ok': False, 'error': 'room'})
+                v = {x: (str(d.get(x) or '').replace('\r', '').strip()[:600] or None) for x in ('ar', 'en', 'tr')}
+                with db() as con:
+                    con.execute('INSERT OR REPLACE INTO room_info(room, ar, en, tr, updated) VALUES(?,?,?,?,?)', (k, v['ar'], v['en'], v['tr'], now()))
+                    info = room_info(con)
+                return self.send(200, {'ok': True, 'room': info.get(k, {})})
             if p == '/api/admin/prices':
                 with db() as con:
                     for k in ROOMS:
@@ -2097,7 +2155,7 @@ class H(BaseHTTPRequestHandler):
                 with LOCK, db() as con:
                     for x in nos:
                         if not con.execute('SELECT 1 FROM units WHERE no=?', (x,)).fetchone():
-                            con.execute('INSERT INTO units(no,room,floor) VALUES(?,?,?)', (x, room, clean(d.get('floor'), 12) or None)); added += 1
+                            con.execute('INSERT INTO units(no,room,floor,view) VALUES(?,?,?,?)', (x, room, clean(d.get('floor'), 12) or None, d.get('view') if d.get('view') in VIEWS else None)); added += 1
                     sync_inventory(con)
                 return self.send(200, {'ok': True, 'added': added, 'skipped': len(nos) - added})
             m = re.fullmatch(r'/api/admin/units/(\d+)(/delete)?', p)
@@ -2120,6 +2178,8 @@ class H(BaseHTTPRequestHandler):
                             con.execute('UPDATE units SET merge=? WHERE id=?', (1 if d.get('merge') else 0, int(m.group(1))))
                         if 'pair' in d:
                             con.execute('UPDATE units SET pair=? WHERE id=?', (clean(d.get('pair'), 12) or None, int(m.group(1))))
+                        if 'view' in d:
+                            con.execute('UPDATE units SET view=? WHERE id=?', (d['view'] if d.get('view') in VIEWS else None, int(m.group(1))))
                         if 'note' in d:
                             con.execute('UPDATE units SET note=? WHERE id=?', (clean(d.get('note'), 120) or None, int(m.group(1))))
                     sync_inventory(con)

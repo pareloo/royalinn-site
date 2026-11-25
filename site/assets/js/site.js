@@ -75,8 +75,56 @@
     function dropCombo() {
       var had = combo; combo = ''; comboName = ''; comboPrice = '';
       if (had && nights() > 0) { sum.textContent = partyLine(nights()); wa.href = waUrl(); }   // the summary and WhatsApp text never keep a choice that is gone
+      if (had && typeof showChosen === 'function') { showChosen(); }
     }
     var lastOk = null;
+    /* what the guest is booking: photo, name and the hotel's own description of each room type */
+    var chosenBox = box.querySelector('[data-chosen]'), RI = {};
+    if (window.fetch) {
+      Promise.all([fetch('/assets/data/rooms.json').then(function (r) { return r.json(); }).catch(function () { return {}; }),
+                   api ? fetch(api + 'room-info', { credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return {}; }) : {}])
+        .then(function (res) {
+          var base = res[0] || {}, own = (res[1] && res[1].rooms) || {};
+          Object.keys(base).forEach(function (k) {
+            var x = base[k], t = x[L.lang] || x.en || {};
+            RI[k] = { img: x.img || [], name: t.name, desc: (own[k] && own[k][L.lang]) || t.desc, guests: x.guests };
+          });
+          showChosen(); thumbs();
+        });
+    }
+    function rimg(k, w) { var x = RI[k]; return x && x.img && x.img[0] ? '/assets/img/' + x.img[0] + '-' + w + '.webp' : ''; }
+    function thumbs() {           // small photos in the list of rooms the guest can pick
+      if (!avail) { return; }
+      Array.prototype.forEach.call(avail.querySelectorAll('[data-pick],[data-combo]'), function (bt) {
+        if (bt.querySelector('.opt-img')) { return; }
+        var k = bt.getAttribute('data-pick'); if (!k) { try { k = Object.keys(JSON.parse(bt.getAttribute('data-combo')))[0]; } catch (e) { k = ''; } }
+        var src = rimg(k, 360); if (!src) { return; }
+        var im = d.createElement('img'); im.className = 'opt-img'; im.src = src; im.alt = ''; im.width = 72; im.height = 54; im.loading = 'lazy'; im.decoding = 'async';
+        bt.insertBefore(im, bt.firstChild);
+      });
+    }
+    function showChosen() {
+      if (!chosenBox) { return; }
+      var list = [];
+      if (room.value) { list = [[room.value, roomsNeeded()]]; }
+      else if (combo) { try { var c = JSON.parse(combo); list = Object.keys(c).map(function (k) { return [k, c[k]]; }); } catch (e) { list = []; } }
+      chosenBox.textContent = '';
+      if (!list.length || !RI[list[0][0]] || nights() <= 0) { chosenBox.hidden = true; return; }
+      var h = d.createElement('p'); h.className = 'ch-h'; h.textContent = chosenBox.getAttribute('data-lh'); chosenBox.appendChild(h);
+      list.forEach(function (it) {
+        var x = RI[it[0]]; if (!x) { return; }
+        var card = d.createElement('div'); card.className = 'ch-card';
+        var src = rimg(it[0], 540);
+        if (src) { var im = d.createElement('img'); im.src = src; im.alt = x.name || ''; im.width = 540; im.height = 405; im.loading = 'lazy'; im.decoding = 'async'; card.appendChild(im); }
+        var tx = d.createElement('div'); tx.className = 'ch-tx';
+        var nm = d.createElement('b'); nm.textContent = (it[1] > 1 ? it[1] + ' × ' : '') + x.name; tx.appendChild(nm);
+        var cap = d.createElement('small'); cap.textContent = L.upto.replace('{n}', x.guests); tx.appendChild(cap);
+        var ds = d.createElement('p'); ds.textContent = x.desc || ''; tx.appendChild(ds);
+        card.appendChild(tx); chosenBox.appendChild(card);
+      });
+      var ph = d.createElement('small'); ph.className = 'ch-note'; ph.textContent = chosenBox.getAttribute('data-lph'); chosenBox.appendChild(ph);
+      chosenBox.hidden = false;
+    }
     function text(ref) {
       var lines = [L.hello], n = nights();
       if (ref) { lines.push(L.lref + ': ' + ref); }
@@ -125,7 +173,7 @@
               stat.textContent = (p.available ? '' : L.availNo + ' ') + (p.total ? money(p.per_night) + ' ' + pnl(p.per_night, p.total) + ' · ' + comboPrice : L.ask);
               stat.className = 'pick-stat ' + (p.available ? 'ok' : 'full');
               Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-combo') === key ? 'true' : 'false'); });
-              sum.textContent = partyLine(n); sum.hidden = false; wa.href = waUrl();
+              sum.textContent = partyLine(n); sum.hidden = false; wa.href = waUrl(); showChosen();
             }).catch(function () {});
         }, 250);
       }
@@ -233,7 +281,7 @@
               if (keep) { var ps = keep.querySelector('.opt-price small'); comboPrice = ps ? ps.textContent : ''; sum.textContent = partyLine(n); sum.hidden = false; }
             }
           }
-          avail.className = 'book-avail ' + (ok ? 'is-ok' : 'is-full'); avail.hidden = false;
+          avail.className = 'book-avail ' + (ok ? 'is-ok' : 'is-full'); avail.hidden = false; thumbs();
         }).catch(function () { avail.hidden = true; });
     }
     avail.addEventListener('click', function (e) {
@@ -246,7 +294,7 @@
         if (pickRefresh) { pickRefresh(); }
         Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x === cb ? 'true' : 'false'); });
         var pr = cb.querySelector('.opt-price small'); comboPrice = pr ? pr.textContent : '';
-        sum.textContent = partyLine(nights()); sum.hidden = false; wa.href = waUrl();
+        sum.textContent = partyLine(nights()); sum.hidden = false; wa.href = waUrl(); showChosen();
       }
     });
     var note = d.createElement('p'); note.className = 'book-note'; note.hidden = true; note.textContent = L.roomsnote;
@@ -277,6 +325,7 @@
         if (pr) { line += ' · ' + L.est.replace('{p}', money(pr * n)); }
         sum.textContent = line; sum.hidden = false;
       } else { sum.hidden = true; }
+      showChosen();
       checkAvail();
     }
     if (!err.id) { err.id = 'bk-err-' + Math.random().toString(36).slice(2, 8); }
@@ -327,6 +376,7 @@
             box.querySelector('[data-ref]').textContent = j.ref;
             box.querySelector('[data-wa-done]').href = waUrl(j.ref);
             more.hidden = true; box.querySelector('.book-grid').hidden = true; sum.hidden = true; avail.hidden = true;
+            if (chosenBox && !chosenBox.hidden) { var keep = chosenBox.cloneNode(true); keep.removeAttribute('data-chosen'); done.insertBefore(keep, box.querySelector('[data-wa-done]')); chosenBox.hidden = true; }
             done.hidden = false; done.focus();
             // on phones, open WhatsApp with the request already written, so the hotel receives it there too
             if (window.matchMedia && window.matchMedia('(pointer:coarse)').matches) { setTimeout(function () { window.location.href = waUrl(j.ref); }, 1200); }
@@ -510,6 +560,16 @@
     var dir = getComputedStyle(rail).direction === 'rtl' ? -1 : 1;
     rail.scrollBy({ left: step * dir * (b.getAttribute('data-rail') === 'next' ? 1 : -1), behavior: calm ? 'auto' : 'smooth' });
   });
+
+  /* rooms page: the hotel's own room descriptions, written in its panel */
+  (function () {
+    var ps = d.querySelectorAll('[data-rdesc]'), api = root.getAttribute('data-api');
+    if (!ps.length || !api || !window.fetch) { return; }
+    fetch(api + 'room-info', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { return; }
+      Array.prototype.forEach.call(ps, function (p) { var v = j.rooms[p.getAttribute('data-rdesc')]; if (v && v[root.lang]) { p.textContent = v[root.lang]; } });
+    }).catch(function () {});
+  })();
 
   /* booking status check: booking number + last four phone digits */
   [].forEach.call(d.querySelectorAll('[data-status]'), function (f) {

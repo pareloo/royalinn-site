@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=cbf1ac78) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=cbf1ac78) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=cbf1ac78) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=7b9c6467) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=7b9c6467) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=7b9c6467) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -523,3 +523,13 @@ h1{font-size:1rem}
 .book-opts .opt-name small{display:block;font-weight:400;font-size:.8rem;color:var(--muted)}
 .pick-toggle{margin:12px 0 0;background:none;border:1px dashed #8aa3ad;border-radius:10px;padding:10px 14px;width:100%;font:inherit;font-weight:600;color:var(--sea);cursor:pointer}
 .pick-toggle[aria-expanded=true]{border-style:solid}
+/* the rooms being booked: photo, name, description */
+.book-opts .opt-img{width:72px;height:54px;object-fit:cover;flex:none;border-radius:2px}.book-opts .opt-name{flex:1;min-width:0}
+.book-chosen{margin:12px 0 0;display:grid;gap:10px}.book-chosen[hidden]{display:none}
+.book-chosen .ch-h{margin:0;font-weight:700;color:var(--sea);font-size:.95rem}
+.ch-card{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start;background:#fff;border:1px solid var(--line-2);padding:10px}
+.ch-card img{width:150px;height:112px;object-fit:cover;display:block}
+.ch-tx b{display:block;color:var(--sea);font-size:1rem}.ch-tx small{color:var(--muted)}.ch-tx p{margin:6px 0 0;font-size:.92rem;line-height:1.6}
+.ch-note{color:var(--muted);font-size:.8rem}
+@media (max-width:520px){.ch-card{grid-template-columns:1fr}.ch-card img{width:100%;height:auto;aspect-ratio:4/3}}
+.book-done .book-chosen,.book-done .ch-card{text-align:start}
