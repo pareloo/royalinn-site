@@ -91,6 +91,20 @@ def units(b):
     return {b['room']: (_g(b, 'rooms') or 1)} if _g(b, 'room') else {}
 
 
+def room_nos(v):
+    """Room numbers a booking holds: '101, 102' -> ['101', '102'] (one booking can hold several rooms)."""
+    return [x for x in re.split(r'[\s,،;+/]+', str(v or '')) if x][:40]
+
+
+def slots(b):
+    """The physical rooms a booking needs numbers for, in order: a family suite needs its suite and its connecting room."""
+    out = []
+    for k, n in units(b).items():
+        for _ in range(n):
+            out += ['royal-suite', CONNECT] if k == FAMILY else [k]
+    return out or [None] * max(1, _g(b, 'rooms') or 1)
+
+
 def r5(x):
     """Money the guest sees or pays: whole dollars to the nearest 5, no small change (hotel, 25 Nov 2026)."""
     return int(5 * math.floor(x / 5.0 + 0.5))      # halves round up (112.5 -> 115), like the site's own Math.round
@@ -139,14 +153,14 @@ def allocate(combo, guests):
 
 def combo_nightly(con, combo, guests, nights, memo=None):
     memo = {} if memo is None else memo
-    tot = [0] * len(nights)
+    tot = [0] * len(nights); parts = []
     for k, g in allocate(combo, guests):
         if (k, g) not in memo:
             memo[(k, g)] = _one_room(con, k, g, nights)
-        per = memo[(k, g)]
+        per = memo[(k, g)]; parts.append(per)
         for i, x in enumerate(per):
             tot[i] = None if (x is None or tot[i] is None) else tot[i] + x
-    return tot
+    return Nights(tot, parts)
 
 
 def free_units(con, a, b, skip=None):
@@ -434,11 +448,17 @@ def _availability(con, a, b, room, skip=None, need=1):
     return True
 
 
+class Nights(list):
+    """Nightly prices for several rooms together; .parts keeps each room's own prices, so offers round per room."""
+    def __init__(self, vals, parts):
+        super().__init__(vals); self.parts = parts
+
+
 def nightly(con, room, guests, nights):
     """Price for each night for the whole party, over as many rooms of this type as it needs."""
     if room and room in MAX_GUESTS and guests > MAX_GUESTS[room]:
         parts = [_one_room(con, room, g, nights) for g in split(room, guests)]
-        return [None if any(p[i] is None for p in parts) else sum(p[i] for p in parts) for i in range(len(nights))]
+        return Nights([None if any(p[i] is None for p in parts) else sum(p[i] for p in parts) for i in range(len(nights))], parts)
     return _one_room(con, room, guests, nights)
 
 
@@ -483,7 +503,9 @@ def discounted(con, per, nights):
         pct = max([o['percent'] for o in offers if o['date_from'] <= n.isoformat() <= o['date_to']] or [0])
         if p is not None and pct:
             best = max(best or 0, pct)
-            p = r5(p * (100 - pct) / 100.0)      # offer prices to the nearest 5 dollars
+            # each room is discounted on its own, down to a multiple of 5: the guest always gets at least the full percent (hotel, 25 Nov 2026)
+            rooms = [x[len(out)] for x in getattr(per, 'parts', None) or []] or [p]
+            p = sum(int(round(x * (100 - pct))) // 500 * 5 for x in rooms)
         out.append(p)
     return out, best
 
@@ -969,8 +991,11 @@ def sync_inventory(con, room=None):
 
 def unit_busy(con, no, a, b, skip=None):
     """A confirmed booking that already holds this room number on overlapping nights."""
-    return con.execute("SELECT ref, name FROM bookings WHERE status='confirmed' AND departed IS NULL AND room_no=? AND check_in < ? AND check_out > ? AND ref != ?",
-                       (no, b, a, skip or '')).fetchone()
+    for r in con.execute("SELECT ref, name, room_no FROM bookings WHERE status='confirmed' AND departed IS NULL AND room_no IS NOT NULL AND check_in < ? AND check_out > ? AND ref != ?",
+                         (b, a, skip or '')):
+        if no in room_nos(r['room_no']):
+            return r
+    return None
 
 
 def reminder_loop():
@@ -1192,7 +1217,7 @@ def units_view(con, ds, free_only=False):
     out = []
     bks = con.execute("SELECT * FROM bookings WHERE status='confirmed' AND room_no IS NOT NULL AND check_in <= ? AND check_out >= ?", (ds, ds)).fetchall()
     for u in con.execute('SELECT * FROM units ORDER BY length(no), no'):
-        mine = [b for b in bks if b['room_no'] == u['no']]
+        mine = [b for b in bks if u['no'] in room_nos(b['room_no'])]
         stay = next((b for b in mine if b['check_in'] <= ds < b['check_out'] and not b['departed']), None)
         leave = next((b for b in mine if b['check_out'] == ds and not b['departed']), None)
         st = 'out' if u['state'] == 'out' else 'occupied' if (stay and stay['arrived']) else 'arriving' if stay else 'leaving' if leave else ('dirty' if u['state'] == 'dirty' else 'free')
@@ -1217,6 +1242,7 @@ def row(r):
     d = dict(r)
     d['breakfast'] = bool(d['breakfast'])
     d['room_name'] = room_label(r, 1, 'أي غرفة')
+    d['slots'] = slots(r); d['room_nos'] = room_nos(d.get('room_no'))
     d['letter'] = '/api/confirmation/%s/%s' % (d['ref'], letter_key(d['ref']))
     d['agency_name'] = AGENCIES.get(d.get('agency_id')) if d.get('agency_id') else None
     d['source_name'] = SOURCES.get(d.get('source') or 'web', 'الموقع')
@@ -1314,8 +1340,8 @@ def letter_html(r, S=None):
         cards += ('<div class="lroom">%s<div><b>%s</b><p>%s</p></div></div>'
                   % (('<img src="/assets/img/%s-360.jpg" alt="" width="120" height="90">' % e(im)) if im else '',
                      e(((('%d × ' % n) if n > 1 else '') + NAMES.get(k, (k, k))[0 if lk == 'en' else 1])), e(txt)))
-    view = (S or {}).get('_view')
-    rooms_box = ('<div class="lrooms">%s%s</div>' % (cards, ('<p class="lview">%s: %s</p>' % (e(LBL['room_no'][i]) + ' ' + e(g('room_no')), e(VIEWS[view][0 if lk == 'en' else 1]))) if view in VIEWS else '')) if cards else ''
+    vl = ''.join('<p class="lview">%s %s: %s</p>' % (e(LBL['room_no'][i]), e(x), e(VIEWS[v][0 if lk == 'en' else 1])) for x, v in ((S or {}).get('_views') or []) if v in VIEWS)
+    rooms_box = ('<div class="lrooms">%s%s</div>' % (cards, vl)) if cards else ''
     strip = ('<div class="strip">' + tile('cin', _fd(r['check_in']), '%s · %s' % (e(wd(r['check_in'])), e(L['from14'])))
              + tile('cout', _fd(r['check_out']), '%s · %s' % (e(wd(r['check_out'])), e(L['until12'])))
              + tile('nights', r['nights'], '%s: %s' % (e(LBL['guests'][i]), r['guests']), 'num') + tile('room', e(room), ('%s: %s' % (e(LBL['room_no'][i]), e(g('room_no')))) if g('room_no') else e(L['yes'] if r['breakfast'] else L['no']), 'wide') + '</div>')
@@ -1506,8 +1532,7 @@ class H(BaseHTTPRequestHandler):
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
                     load_agencies(con); S = dict(settings(con)); S['_rinfo'] = room_info(con)
                     if r and r['room_no']:
-                        u = con.execute('SELECT view FROM units WHERE no=?', (r['room_no'],)).fetchone()
-                        S['_view'] = u['view'] if u else None
+                        S['_views'] = [(x, (con.execute('SELECT view FROM units WHERE no=?', (x,)).fetchone() or {'view': None})['view']) for x in room_nos(r['room_no'])]
             return self.send(200 if r else 404, raw=letter_html(r, S if r else None).encode('utf-8'), ctype='text/html; charset=utf-8', extra={'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'})
         m = re.fullmatch(r'/api/pricelist(?:/(\d+)/([0-9a-f]{20}))?', p)
         if m:
@@ -2046,15 +2071,16 @@ class H(BaseHTTPRequestHandler):
                     if not free and not d.get('force'):
                         return self.send(409, dict(res, ok=False, error='full'))
                     room_no = cur['room_no']
-                    if room_no and stay_changed and unit_busy(con, room_no, f.isoformat(), t.isoformat(), cur['ref']):
-                        room_no = None        # the numbered room is taken on the new dates; the desk picks another
+                    if room_no and stay_changed:
+                        keep_nos = [x for x in room_nos(room_no) if not unit_busy(con, x, f.isoformat(), t.isoformat(), cur['ref'])]
+                        room_no = ', '.join(keep_nos[:len(slots({'combo': keep, 'room': room, 'rooms': rooms_needed(room, guests)}))]) or None   # a room taken on the new dates is dropped; the desk picks another
                     if (room != cur['room'] or keep != _g(cur, 'combo')) and not _g(cur, 'req_room') and not _g(cur, 'req_combo'):
                         # remember what the guest first asked for, once, so their status page can show the change
                         con.execute('UPDATE bookings SET req_room=?, req_combo=? WHERE ref=?', (cur['room'] or '-', _g(cur, 'combo'), m.group(1)))
                     con.execute('UPDATE bookings SET name=?, phone=?, email=?, check_in=?, check_out=?, nights=?, guests=?, rooms=?, combo=?, room=?, breakfast=?, total=?, net=?, room_no=?, updated=? WHERE ref=?',
                                 (name, phone, email, f.isoformat(), t.isoformat(), (t - f).days, guests, (sum(units(cur).values()) if keep else rooms_needed(room, guests)), keep, room, bf, total, net_of(con, total, cur['agency_id']), room_no, now(), m.group(1)))
                     r = con.execute('SELECT * FROM bookings WHERE ref=?', (m.group(1),)).fetchone()
-                return self.send(200, dict(res, item=row(r), room_no_cleared=bool(cur['room_no'] and not room_no)))
+                return self.send(200, dict(res, item=row(r), room_no_cleared=bool(cur['room_no'] and room_nos(room_no) != room_nos(cur['room_no']))))
             m = re.fullmatch(r'/api/admin/agencies/(\d+)/payment', p)
             if m:
                 day = parse_day(d.get('date')) or dt.date.today()
@@ -2256,11 +2282,22 @@ class H(BaseHTTPRequestHandler):
                         paid = cur['paid'] if 'paid' not in d else (None if d['paid'] in (None, '') else max(0, min(1000000, int(d['paid']))))
                     except (TypeError, ValueError):
                         return self.send(400, {'ok': False, 'error': 'paid'})
-                    room_no = cur['room_no'] if 'room_no' not in d else (clean(d.get('room_no'), 12) or None)
-                    if room_no and room_no != cur['room_no'] and (st or cur['status']) == 'confirmed':
-                        clash = unit_busy(con, room_no, cur['check_in'], cur['check_out'], cur['ref'])
-                        if clash and not d.get('force'):
-                            return self.send(409, {'ok': False, 'error': 'room_taken', 'by': clash['name'], 'ref': clash['ref']})
+                    room_no = cur['room_no']
+                    if 'room_no' in d:
+                        raw = d.get('room_no'); lst = [clean(x, 12) for x in (raw if isinstance(raw, list) else room_nos(raw))]
+                        lst = [x for x in lst if x]
+                        if len(lst) != len(set(lst)):
+                            return self.send(400, {'ok': False, 'error': 'room_twice'})
+                        if len(lst) > len(slots(cur)):
+                            return self.send(400, {'ok': False, 'error': 'room_count', 'max': len(slots(cur))})
+                        room_no = ', '.join(lst) or None
+                        if (st or cur['status']) == 'confirmed' and not d.get('force'):
+                            for x in lst:
+                                if x in room_nos(cur['room_no']):
+                                    continue
+                                clash = unit_busy(con, x, cur['check_in'], cur['check_out'], cur['ref'])
+                                if clash:
+                                    return self.send(409, {'ok': False, 'error': 'room_taken', 'by': clash['name'], 'ref': clash['ref'], 'no': x})
                     if st == 'confirmed' and cur['status'] != 'confirmed' and not d.get('force') and not booking_fits(con, cur):
                         return self.send(409, {'ok': False, 'error': 'full'})
                     if d.get('no_show'):
@@ -2283,7 +2320,8 @@ class H(BaseHTTPRequestHandler):
                             src = 'desk'
                     referrer = cur['referrer'] if 'referrer' not in d else (clean(d.get('referrer'), 80) or None)
                     if departed and not cur['departed'] and room_no:
-                        con.execute("UPDATE units SET state='dirty' WHERE no=? AND state='clean'", (room_no,))
+                        for x in room_nos(room_no):
+                            con.execute("UPDATE units SET state='dirty' WHERE no=? AND state='clean'", (x,))
                     if d.get('reminded'):
                         con.execute('UPDATE bookings SET reminded=? WHERE ref=?', (now(), m.group(1)))
                     if d.get('no_show'):

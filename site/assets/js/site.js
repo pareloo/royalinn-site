@@ -402,7 +402,7 @@
     if (id === 'royal-family') { var rs = rooms['royal-suite']; return (rs && rs.price != null && sd && sd.price != null) ? rs.price + (sd.price2 || sd.price) : null; }   // the suite with its connecting room
     return p.price;
   }
-  function off5(p, pct) { return 5 * Math.round(p * (100 - pct) / 500); }   // offer prices to the nearest 5 dollars, as the server counts them
+  function off5(p, pct) { return 5 * Math.floor(Math.round(p * (100 - pct)) / 500); }   // offer prices down to a multiple of 5 (at least the full percent off), as the server counts them
   function liveOffer(items) {
     var today = new Date(), t = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
     return (items || []).filter(function (o) { return o.from <= t && t <= o.to && o.min_nights <= 1; })[0] || null;

@@ -214,3 +214,7 @@ textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid #cfd8dc;borde
 .ri-head h2{margin:0 0 4px}.ri label{display:grid;gap:4px;font-weight:600}.ri textarea{width:100%;font:inherit;padding:8px 10px;border:1px solid #d8d2c4;border-radius:8px;resize:vertical}
 .ri .btns{display:flex;gap:8px;flex-wrap:wrap}
 .u-view{margin-top:6px;width:100%;font-size:.8rem}
+/* one room number per room */
+.rnos{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px 10px;grid-column:1/-1}
+.rnos-h{grid-column:1/-1;font-weight:700;font-size:.9rem}.rno-l{display:grid;gap:3px}.rno-t{font-size:.78rem;color:#6b6b6b}
+.rnos small{grid-column:1/-1}

@@ -127,7 +127,7 @@
       var r = el('div', 'mini');
       r.appendChild(el('b', null, b.name));
       var sub = what === 'new' ? fmt(b.check_in) + ' ← ' + fmt(b.check_out) + ' · ' + b.room_name : b.room_name + ' · ' + b.nights + ' ليالٍ · ' + b.guests + ' ضيوف' + (b.rooms > 1 ? ' · ' + b.rooms + ' غرف' : '');
-      if (b.status === 'new') sub += ' · لم يُؤكَّد بعد'; if (b.room_no) sub += ' · غرفة ' + b.room_no; if (b.agency_name) sub += ' · ' + b.agency_name;
+      if (b.status === 'new') sub += ' · لم يُؤكَّد بعد'; if (b.room_no) sub += ((b.room_nos || []).length > 1 ? ' · غرف ' : ' · غرفة ') + b.room_no; if (b.agency_name) sub += ' · ' + b.agency_name;
       r.appendChild(el('span', 'm-sub', sub));
       if (b.phone) { var a = el('a', 'btn ghost', 'اتصال'); a.href = 'tel:' + b.phone.replace(/[^0-9+]/g, ''); r.appendChild(a); }
       box.appendChild(r);
@@ -147,7 +147,7 @@
       if (!items.length) return;
       var c = el('div', 'card desk-alert ' + cls); c.appendChild(el('h2', null, title + ' (' + items.length + ')'));
       items.forEach(function (b) {
-        var r = el('div', 'mini'); r.appendChild(el('b', null, b.name + (b.room_no ? ' · غرفة ' + b.room_no : '')));
+        var r = el('div', 'mini'); r.appendChild(el('b', null, b.name + (b.room_no ? ((b.room_nos || []).length > 1 ? ' · غرف ' : ' · غرفة ') + b.room_no : '')));
         var sub = el('span', 'm-sub'); r.appendChild(sub); each2(b, r, sub); box.appendChild(c); c.appendChild(r);
       });
     }
@@ -276,7 +276,7 @@
     h.appendChild(el('strong', 'name', b.name));
     h.appendChild(el('span', 'badge', LABEL[b.status]));
     if (b.departed) h.appendChild(el('span', 'badge gone', 'غادر')); else if (b.arrived) h.appendChild(el('span', 'badge in', 'في الفندق'));
-    if (b.room_no) h.appendChild(el('span', 'badge rno', 'غرفة ' + b.room_no));
+    if (b.room_no) h.appendChild(el('span', 'badge rno', ((b.room_nos || []).length > 1 ? 'غرف ' : 'غرفة ') + b.room_no));
     h.appendChild(el('span', 'ref', b.ref));
     c.appendChild(h);
     var body = el('div', 'bk-body');
@@ -309,13 +309,32 @@
     var roomNo = null, paid = null, ext = null, agSel = null, paySel = null;
     if (b.status === 'confirmed') {
       var desk = el('div', 'desk');
-      var l1 = el('label', null, 'رقم الغرفة'); roomNo = el('input'); roomNo.type = 'text'; roomNo.maxLength = 12; roomNo.value = b.room_no || ''; roomNo.dir = 'ltr'; l1.appendChild(roomNo); desk.appendChild(l1);
-      var dl = el('datalist'); dl.id = 'free-' + b.ref; roomNo.setAttribute('list', dl.id); roomNo.placeholder = 'اختر من المتاح'; l1.appendChild(dl);
-      var hint = el('small', 'muted'); l1.appendChild(hint);
-      roomNo.addEventListener('focus', function () { if (dl.loaded) return; dl.loaded = 1; api('units/free?in=' + b.check_in + '&out=' + b.check_out + '&ref=' + b.ref + (b.room ? '&room=' + b.room : '')).then(function (j) {
-        if (!j.ok || !j.defined) return; var same = j.free.filter(function (u) { return u.match; });
-        (same.length ? same : j.free).forEach(function (u) { var o = el('option'); o.value = u.no; o.label = roomName(u.room) + (u.view ? ' · ' + VIEWS[u.view] : '') + (u.state === 'dirty' ? ' · تحتاج تنظيف' : ''); dl.appendChild(o); });
-        hint.textContent = same.length ? 'المتاح: ' + same.map(function (u) { return u.no + (u.view ? ' (' + VIEWS[u.view] + ')' : ''); }).slice(0, 12).join('، ') : 'لا غرف متاحة من هذا النوع في هذه التواريخ'; }); });
+      // one room number per room: a family suite gets its suite and its connecting room, a mixed booking one box per room
+      var SL = b.slots && b.slots.length ? b.slots : [b.room || null], have = (b.room_nos || []).slice(), boxes = [];
+      var rn = el('div', 'rnos'); rn.appendChild(el('span', 'rnos-h', SL.length > 1 ? 'أرقام الغرف (' + SL.length + ')' : 'رقم الغرفة'));
+      var hint = el('small', 'muted'), FREE = null;
+      SL.forEach(function (k, n) {
+        var lb = el('label', 'rno-l'), tag = k === 'royal-connect' ? 'الغرفة المتصلة' : (k ? roomName(k) : 'غرفة');
+        var same = SL.filter(function (x) { return x === k; }).length > 1 ? ' ' + (SL.slice(0, n + 1).filter(function (x) { return x === k; }).length) : '';
+        lb.appendChild(el('span', 'rno-t', tag + same));
+        var inp = el('input'); inp.type = 'text'; inp.maxLength = 12; inp.dir = 'ltr'; inp.placeholder = 'اختر من المتاح';
+        inp.value = have[n] || ''; inp.setAttribute('aria-label', 'رقم الغرفة: ' + tag + same);
+        var dl = el('datalist'); dl.id = 'free-' + b.ref + '-' + n; inp.setAttribute('list', dl.id);
+        inp.addEventListener('focus', function () {
+          var fill = function () {
+            dl.textContent = '';
+            var taken = boxes.map(function (x) { return x !== inp && x.value.trim(); });
+            var list = FREE.filter(function (u) { return (!k || u.room === k) && taken.indexOf(u.no) === -1; });
+            (list.length ? list : FREE).forEach(function (u) { var o = el('option'); o.value = u.no; o.label = roomName(u.room) + (u.view ? ' · ' + VIEWS[u.view] : '') + (u.state === 'dirty' ? ' · تحتاج تنظيف' : ''); dl.appendChild(o); });
+            hint.textContent = list.length ? 'المتاح (' + tag + '): ' + list.map(function (u) { return u.no + (u.view ? ' (' + VIEWS[u.view] + ')' : ''); }).slice(0, 12).join('، ') : 'لا غرف متاحة من هذا النوع في هذه التواريخ';
+          };
+          if (FREE) return fill();
+          api('units/free?in=' + b.check_in + '&out=' + b.check_out + '&ref=' + b.ref).then(function (j) { if (!j.ok || !j.defined) return; FREE = j.free; fill(); });
+        });
+        lb.appendChild(inp); lb.appendChild(dl); rn.appendChild(lb); boxes.push(inp);
+      });
+      rn.appendChild(hint); desk.appendChild(rn);
+      roomNo = { get value() { return boxes.map(function (x) { return x.value.trim(); }).filter(Boolean); } };
       var l2 = el('label', null, 'المدفوع $'); paid = el('input'); paid.type = 'number'; paid.min = 0; paid.inputMode = 'numeric'; paid.value = b.paid == null ? '' : b.paid; l2.appendChild(paid); desk.appendChild(l2);
       var l4 = el('label', null, 'الوكالة'); agSel = el('select'); var o0 = el('option', null, 'بدون وكالة'); o0.value = ''; agSel.appendChild(o0);
       AGS.forEach(function (a) { var o = el('option', null, a.name); o.value = a.id; agSel.appendChild(o); }); agSel.value = b.agency_id || ''; l4.appendChild(agSel); desk.appendChild(l4);
@@ -471,7 +490,9 @@
     api('bookings/' + ref, data).then(function (j) {
       if (j.ok) { if (st === 'confirmed' && tab === 'new') { toast(j.mailed ? 'تم تأكيد الحجز وأُرسل التأكيد إلى بريد الزبون.' : 'تم تأكيد الحجز. أرسل الآن رسالة التأكيد للزبون.'); return go('active'); }
         toast(st === 'confirmed' ? 'تم تأكيد الحجز' : st === 'cancelled' ? 'تم الإلغاء' : st === 'new' ? 'أُعيد إلى الطلبات الجديدة' : 'تم الحفظ'); loadList(); }
-      else if (j.error === 'room_taken') toast('هذه الغرفة محجوزة في هذه التواريخ للضيف: ' + j.by);
+      else if (j.error === 'room_taken') toast('الغرفة ' + (j.no || '') + ' محجوزة في هذه التواريخ للضيف: ' + j.by);
+      else if (j.error === 'room_twice') toast('رقم الغرفة نفسه مكتوب مرتين');
+      else if (j.error === 'room_count') toast('هذا الحجز يحتاج ' + j.max + ' أرقام غرف فقط');
       else if (j.error === 'full') {
         if (confirm('لا توجد غرف شاغرة من هذا النوع في هذه التواريخ (أو التواريخ مغلقة). تأكيده سيعني حجزاً زائداً. هل تؤكّده رغم ذلك؟')) { var m2 = more || {}; m2.force = true; update(ref, st, note, m2); }
         else loadList();
