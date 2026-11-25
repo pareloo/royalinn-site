@@ -632,14 +632,11 @@
     function dm(s) { var p = s.split('-'); return p[2] + '/' + p[1]; }
     fetch(api + 'offers', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
       var o = j.ok && j.items && j.items[0];
-      if (!o) { return; }
+      try { localStorage.setItem('ri_offer', JSON.stringify(o ? { percent: o.percent, from: o.from, to: o.to, title_ar: o.title_ar, title_en: o.title_en } : false)); } catch (e) { /* private mode */ }
+      if (!o) { if (bar) { bar.hidden = true; bar.removeAttribute('data-shown'); } return; }
       var ar = root.lang === 'ar', title = (ar ? o.title_ar : root.lang === 'en' ? o.title_en : '') || '';   // other languages use their own wording
       if (bar) {
-        var B = bar.dataset, b1 = d.createElement('b'), s1 = d.createElement('span'), c1 = d.createElement('u');
-        b1.textContent = B.off.replace('{p}', o.percent);
-        s1.textContent = (title || B.lead) + ' · ' + B.dates.replace('{a}', dm(o.from)).replace('{b}', dm(o.to));
-        c1.textContent = B.cta;
-        bar.appendChild(b1); bar.appendChild(s1); bar.appendChild(c1); bar.hidden = false;
+        if (window.riPromoBar) { window.riPromoBar(bar, o); }
       }
       [].forEach.call(boxes, function (box) {
         var L = box.closest('[data-booking]').dataset;
