@@ -38,6 +38,7 @@
     var more = box.querySelector('[data-more]'), next = box.querySelector('[data-next]'), err = box.querySelector('[data-err]');
     var avail = box.querySelector('[data-avail]'), done = box.querySelector('[data-done]'), send = box.querySelector('[data-send]');
     var L = box.dataset, now = new Date(), api = L.api, lastCheck = '', sending = false;
+    var combo = '', comboName = '';                               // a mix of room types picked from the suggestions
     ci.min = iso(now);
     co.min = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
     function nights() {
@@ -74,8 +75,9 @@
       if (co.value) { lines.push(L.lout + ': ' + co.value); }
       if (n > 0) { lines.push(L.lnights + ': ' + n); }
       lines.push(L.lguests + ': ' + guests.value);
-      if (roomsNeeded() > 1) { lines.push(L.lrooms + ': ' + roomsNeeded()); }
+      if (!comboName && roomsNeeded() > 1) { lines.push(L.lrooms + ': ' + roomsNeeded()); }
       if (room.value) { lines.push(L.lroom + ': ' + room.options[room.selectedIndex].text); }
+      else if (comboName) { lines.push(L.lroom + ': ' + comboName); }
       if (f('breakfast').checked) { lines.push(L.lbf + ': ' + L.yes); }
       if (f('message').value.trim()) { lines.push(f('message').value.trim()); }
       return lines.join('\n');
@@ -106,13 +108,24 @@
             }
             if (!room.value) {
               var ul = d.createElement('ul'); ul.className = 'book-opts';
-              list.forEach(function (r) {
-                var li = d.createElement('li'), bt = d.createElement('button');
-                bt.type = 'button'; bt.setAttribute('data-pick', r.id);
-                var nm = d.createElement('span'), op = room.querySelector('option[value="' + r.id + '"]'); nm.textContent = (op ? op.textContent : (L.lang === 'ar' ? r.name_ar : r.name_en)) + (r.rooms > 1 ? ' × ' + r.rooms : '');
-                var pr = d.createElement('b');
-                if (r.total && r.base_total) { var was = d.createElement('s'); was.textContent = money(r.base_total); pr.appendChild(was); pr.appendChild(d.createTextNode(' ' + money(r.total))); }
-                else { pr.textContent = r.total ? money(r.total) : L.ask; }
+              var opts = j.options || [];
+              if (combo && !opts.some(function (o) { return JSON.stringify(o.rooms) === combo; })) { combo = ''; comboName = ''; }
+              opts.forEach(function (o, i) {
+                var li = d.createElement('li'), bt = d.createElement('button'), key = JSON.stringify(o.rooms);
+                bt.type = 'button'; bt.setAttribute('data-combo', key); bt.setAttribute('aria-pressed', key === combo ? 'true' : 'false');
+                var nm = d.createElement('span'); nm.className = 'opt-name'; nm.setAttribute('data-label', L.lang === 'ar' ? o.name_ar : o.name_en);
+                Object.keys(o.rooms).forEach(function (k) {
+                  var op = room.querySelector('option[value="' + k + '"]'), ln = d.createElement('span');
+                  ln.textContent = o.rooms[k] + ' × ' + (op ? op.textContent : k); nm.appendChild(ln);
+                });
+                var pr = d.createElement('span'); pr.className = 'opt-price';
+                if (o.total) {
+                  var a1 = d.createElement('b'); a1.textContent = money(o.per_night); pr.appendChild(a1); pr.appendChild(d.createTextNode(' ' + L.pernight));
+                  var a2 = d.createElement('small');
+                  a2.textContent = L.ltotal + ' ' + (o.base_total ? '' : '') + '\u2066$' + o.total + '\u2069' + (o.base_total ? ' (' + L.ofOff.replace('{p}', o.offer_percent) + ')' : '');
+                  pr.appendChild(a2);
+                } else { pr.textContent = L.ask; }
+                if (i === 0 && o.total) { var tag = d.createElement('em'); tag.textContent = L.lowest; nm.appendChild(tag); }
                 bt.appendChild(nm); bt.appendChild(pr); li.appendChild(bt); ul.appendChild(li);
               });
               avail.appendChild(ul);
@@ -123,7 +136,14 @@
     }
     avail.addEventListener('click', function (e) {
       var bt = e.target.closest && e.target.closest('[data-pick]');
-      if (bt) { room.value = bt.getAttribute('data-pick'); update(); }
+      if (bt) { room.value = bt.getAttribute('data-pick'); update(); return; }
+      var cb = e.target.closest && e.target.closest('[data-combo]');
+      if (cb) {
+        combo = cb.getAttribute('data-combo'); comboName = cb.querySelector('.opt-name').getAttribute('data-label');
+        Array.prototype.forEach.call(avail.querySelectorAll('[data-combo]'), function (x) { x.setAttribute('aria-pressed', x === cb ? 'true' : 'false'); });
+        var pr = cb.querySelector('.opt-price small'); sum.textContent = L.lnights + ': ' + nights() + ' · ' + L.lguests + ': ' + guests.value + ' · ' + comboName + (pr ? ' · ' + pr.textContent : '');
+        sum.hidden = false; wa.href = waUrl();
+      }
     });
     var note = d.createElement('p'); note.className = 'book-note'; note.hidden = true; note.textContent = L.roomsnote;
     var rl = room.closest('label'); rl.parentNode.insertBefore(note, rl.nextSibling);
@@ -146,31 +166,42 @@
       } else { sum.hidden = true; }
       checkAvail();
     }
-    function fail(msg, fields) {
-      err.textContent = msg; err.hidden = false;
+    if (!err.id) { err.id = 'bk-err-' + Math.random().toString(36).slice(2, 8); }
+    function clearBad() {
       each('.field', function (x) { x.classList.remove('bad'); }, box);
+      each('[aria-invalid]', function (x) { x.removeAttribute('aria-invalid'); x.removeAttribute('aria-describedby'); }, box);
+    }
+    function fail(msg, fields) {
+      err.textContent = msg; err.hidden = false; clearBad();
+      var first = null;
       (fields || []).forEach(function (k) {
         var map = { dates: ['in', 'out'] }, names = map[k] || [k];
-        names.forEach(function (nm) { var i = f(nm); if (i) { i.closest('.field').classList.add('bad'); } });
+        names.forEach(function (nm) {
+          var i = f(nm); if (!i) { return; }
+          i.closest('.field').classList.add('bad'); i.setAttribute('aria-invalid', 'true'); i.setAttribute('aria-describedby', err.id);
+          first = first || i;
+        });
       });
+      if (first) { first.focus(); }
     }
+    function pastDate() { return ci.value && ci.value < iso(new Date()); }
     next.addEventListener('click', function () {
-      if (nights() <= 0) { fail(L.errDates, ['dates']); (ci.value ? co : ci).focus(); return; }
-      err.hidden = true; each('.field', function (x) { x.classList.remove('bad'); }, box);
+      if (nights() <= 0 || pastDate()) { fail(L.errDates, ['dates']); return; }
+      err.hidden = true; clearBad();
       more.hidden = false; next.hidden = true; f('name').focus();
     });
     box.addEventListener('submit', function (e) {
       e.preventDefault();
       if (sending) { return; }
       var bad = [];
-      if (nights() <= 0) { bad.push('dates'); }
+      if (nights() <= 0 || pastDate()) { bad.push('dates'); }
       if (f('name').value.trim().length < 2) { bad.push('name'); }
       if (f('phone').value.replace(/\D/g, '').length < 7) { bad.push('phone'); }
       if (f('email').value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f('email').value)) { bad.push('email'); }
       if (bad.length) { fail(bad[0] === 'dates' ? L.errDates : L.errFields, bad); return; }
       if (!api || !window.fetch) { window.open(waUrl(), '_blank', 'noopener'); return; }
       sending = true; send.disabled = true; err.hidden = true;
-      var body = { lang: L.lang, 'in': ci.value, out: co.value, guests: +guests.value, room: room.value, name: f('name').value.trim(),
+      var body = { lang: L.lang, 'in': ci.value, out: co.value, guests: +guests.value, room: room.value, combo: (!room.value && combo) ? combo : undefined, name: f('name').value.trim(),
                    phone: f('phone').value.trim(), email: f('email').value.trim(), message: f('message').value.trim(),
                    breakfast: f('breakfast').checked, website: f('website').value };
       fetch(api + 'booking', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
