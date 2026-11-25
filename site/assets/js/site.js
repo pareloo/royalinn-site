@@ -302,9 +302,10 @@
   function twoRate(rooms, id) {                                  // price per night for two guests, as the booking server counts it
     var p = rooms[id === 'royal-family' ? 'royal-suite' : id], sd = rooms.standard; if (!p || p.price == null) { return null; }
     if (id === 'standard') { return p.price2 || p.price; }
-    if (id === 'royal-family') { var rs = rooms['royal-suite']; return (rs && rs.price != null && sd && sd.price != null) ? rs.price + sd.price : null; }   // the suite with its connecting room
+    if (id === 'royal-family') { var rs = rooms['royal-suite']; return (rs && rs.price != null && sd && sd.price != null) ? rs.price + (sd.price2 || sd.price) : null; }   // the suite with its connecting room
     return p.price;
   }
+  function off5(p, pct) { return 5 * Math.round(p * (100 - pct) / 500); }   // offer prices to the nearest 5 dollars, as the server counts them
   function liveOffer(items) {
     var today = new Date(), t = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
     return (items || []).filter(function (o) { return o.from <= t && t <= o.to && o.min_nights <= 1; })[0] || null;
@@ -325,7 +326,7 @@
           var r2 = twoRate(j.rooms, id);
           if (r2 == null) { var bq = d.createElement('b'); bq.textContent = t.getAttribute('data-ask'); t.appendChild(bq); return; }
           var was = d.createElement('s'); was.className = 'ltr was'; was.textContent = '$' + r2;
-          var now = d.createElement('b'); now.className = 'ltr'; now.textContent = '$' + Math.round(r2 * (100 - off.percent) / 100);
+          var now = d.createElement('b'); now.className = 'ltr'; now.textContent = '$' + off5(r2, off.percent);
           t.appendChild(was); t.appendChild(d.createTextNode(' ')); t.appendChild(now);
           t.appendChild(d.createTextNode(' ' + TWO + (per ? ' ' + per : '')));
           return;
@@ -333,7 +334,7 @@
         var p1 = p.price, p2 = p.price2, sd = j.rooms.standard;
         if (id === 'royal-family') { p = j.rooms['royal-suite'] || {}; p1 = p.price; p2 = null; }
         if (id === 'royal-family' && p1 != null) {                 // sold with its connecting room, charged at the Standard rate
-          if (!sd || sd.price == null) { p1 = null; } else { p1 += sd.price; p2 = null; }
+          if (!sd || sd.price == null) { p1 = null; } else { p1 += (sd.price2 || sd.price); p2 = null; }
         }
         if (p1 == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
         var b = d.createElement('b'); b.className = 'ltr'; b.textContent = '$' + p1;
@@ -535,7 +536,7 @@
               var li = d.createElement('li'), nm = d.createElement('span'), pr = d.createElement('span');
               nm.textContent = (op ? op.textContent : id) + ' · ' + TWO;
               var s0 = d.createElement('s'); s0.className = 'ltr'; s0.textContent = '$' + r2;
-              var b0 = d.createElement('b'); b0.className = 'ltr'; b0.textContent = '$' + Math.round(r2 * (100 - o.percent) / 100);
+              var b0 = d.createElement('b'); b0.className = 'ltr'; b0.textContent = '$' + off5(r2, o.percent);
               pr.appendChild(s0); pr.appendChild(d.createTextNode(' ')); pr.appendChild(b0);
               li.appendChild(nm); li.appendChild(pr); ul.appendChild(li);
             });

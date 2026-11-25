@@ -416,7 +416,8 @@ def nightly(con, room, guests, nights):
 def _one_room(con, room, guests, nights):
     """Price for each night of one room. The Royal Suite adds its connecting room at the Standard rate (single rate, double rate from 4 guests)."""
     if room == FAMILY:
-        a = _nightly(con, 'royal-suite', min(guests, 2), nights); b = _nightly(con, 'standard', 2 if guests >= 4 else 1, nights)
+        # the connecting room is always charged at the Standard rate for two (hotel, 25 Nov 2026)
+        a = _nightly(con, 'royal-suite', min(guests, 2), nights); b = _nightly(con, 'standard', 2, nights)
         return [None if (x is None or y is None) else x + y for x, y in zip(a, b)]
     return _nightly(con, room, guests, nights)
 
@@ -453,7 +454,7 @@ def discounted(con, per, nights):
         pct = max([o['percent'] for o in offers if o['date_from'] <= n.isoformat() <= o['date_to']] or [0])
         if p is not None and pct:
             best = max(best or 0, pct)
-            p = int(round(p * (100 - pct) / 100.0))
+            p = int(5 * round(p * (100 - pct) / 500.0))      # offer prices to the nearest 5 dollars (hotel, 25 Nov 2026)
         out.append(p)
     return out, best
 
@@ -1310,7 +1311,7 @@ def pricelist_html(con, agency=None):
         if k == FAMILY:
             pr = prices.get('royal-suite'); p1 = pr['price'] if pr else None
             st = prices.get('standard')
-            s1 = st['price'] if st else None; s2 = (st['price2'] or s1) if st else None
+            s2 = (st['price2'] or st['price']) if st else None; s1 = s2    # connecting room at the Standard rate for two
             p1 = None if (p1 is None or s1 is None) else p1 + s1
             p2 = None if (p1 is None or s2 is None) else (pr['price'] + s2)
         nt = ' / '.join(x for x in (net(p1), net(p2) if p2 else '') if x)
