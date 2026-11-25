@@ -227,7 +227,7 @@ NAMES = dict(ROOMS, **{'two-bedroom-royal-suite': ('Two-Bedroom Royal Suite', '�
                        CONNECT: ('Connecting room (Royal Suite)', 'غرفة متصلة بجناح رويال')})
 STATUSES = ('new', 'confirmed', 'cancelled')
 # rates confirmed by the hotel (Nov 2026), USD per night incl. tax; price2 = two or more guests. None = on request
-DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (None, None), 'royal-suite': (None, None)}
+DEFAULT_PRICES = {'standard': (90, 100), 'triple': (130, None), 'junior-suite': (130, None), 'royal-suite': (150, None)}
 BREAKFAST = 10
 MAX_NIGHTS, MAX_AHEAD_DAYS = 60, 550
 os.environ['TZ'] = os.environ.get('HOTEL_TZ', '<+03>-3')
@@ -283,6 +283,12 @@ def init():
                      ('reminded', 'TEXT'), ('late_fee', 'INTEGER'), ('no_show', 'INTEGER'), ('rooms', 'INTEGER'), ('combo', 'TEXT')):
             if c not in cols:
                 con.execute(f'ALTER TABLE bookings ADD COLUMN {c} {t}')
+        # New Year offer asked for by the hotel (25 Nov 2026): 20% off every night until 31 December. Added once;
+        # if the hotel deletes it in the panel it stays deleted.
+        if not con.execute("SELECT 1 FROM settings WHERE k='seed_offer_ny2027'").fetchone():
+            con.execute('INSERT INTO offers(percent,title_ar,title_en,date_from,date_to,min_nights,created) VALUES(?,?,?,?,?,?,?)',
+                        (20, 'عرض رأس السنة', 'New Year offer', '2026-11-25', '2026-12-31', 1, dt.datetime.now().isoformat(timespec='seconds')))
+            con.execute("INSERT INTO settings(k,v) VALUES('seed_offer_ny2027','1')")
         for k, (a, b) in DEFAULT_PRICES.items():
             con.execute('INSERT OR IGNORE INTO prices(room,price,price2) VALUES(?,?,?)', (k, a, b))
     path = os.path.join(DATA, 'secret.key')

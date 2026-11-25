@@ -226,26 +226,51 @@
     update();
   });
 
-  /* room prices: the hotel can change them in its panel, so the page refreshes them from the server */
+  /* room prices: the hotel can change them in its panel, so the page refreshes them from the server.
+     While an offer open to one-night stays runs today, every price shows the two-guest rate before and after the discount. */
+  var TWO = { ar: 'لشخصين', en: 'for two', tr: '2 kişi' }[root.lang] || 'for two';
+  function twoRate(rooms, id) {                                  // price per night for two guests, as the booking server counts it
+    var p = rooms[id], sd = rooms.standard; if (!p || p.price == null) { return null; }
+    if (id === 'standard') { return p.price2 || p.price; }
+    if (id === 'royal-suite') { return (sd && sd.price != null) ? p.price + sd.price : null; }   // the suite with its connecting room
+    return p.price;
+  }
+  function liveOffer(items) {
+    var today = new Date(), t = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+    return (items || []).filter(function (o) { return o.from <= t && t <= o.to && o.min_nights <= 1; })[0] || null;
+  }
+  var priceData = null;
   (function () {
     var tags = d.querySelectorAll('[data-rp]'), api = root.getAttribute('data-api');
-    if (!tags.length || !api || !window.fetch) { return; }
-    fetch(api + 'prices', { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j.ok) { return; }
+    if (!api || !window.fetch) { return; }
+    var get = function (u) { return fetch(api + u, { credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return {}; }); };
+    priceData = Promise.all([get('prices'), get('offers')]).then(function (res) {
+      var j = res[0], off = liveOffer(res[1].ok ? res[1].items : []);
+      if (!j.ok) { return null; }
       Array.prototype.forEach.call(tags, function (t) {
         var id = t.getAttribute('data-rp'), p = j.rooms[id]; if (!p) { return; }
+        var frm = t.getAttribute('data-frm'), per = t.getAttribute('data-per');
+        t.textContent = '';
+        if (off) {
+          var r2 = twoRate(j.rooms, id);
+          if (r2 == null) { var bq = d.createElement('b'); bq.textContent = t.getAttribute('data-ask'); t.appendChild(bq); return; }
+          var was = d.createElement('s'); was.className = 'ltr was'; was.textContent = '$' + r2;
+          var now = d.createElement('b'); now.className = 'ltr'; now.textContent = '$' + Math.round(r2 * (100 - off.percent) / 100);
+          t.appendChild(was); t.appendChild(d.createTextNode(' ')); t.appendChild(now);
+          t.appendChild(d.createTextNode(' ' + TWO + (per ? ' ' + per : '')));
+          return;
+        }
         var p1 = p.price, p2 = p.price2, sd = j.rooms.standard;
         if (id === 'royal-suite' && p1 != null) {                 // sold with its connecting room, charged at the Standard rate
           if (!sd || sd.price == null) { p1 = null; } else { p1 += sd.price; p2 = null; }
         }
-        t.textContent = '';
         if (p1 == null) { var b0 = d.createElement('b'); b0.textContent = t.getAttribute('data-ask'); t.appendChild(b0); return; }
         var b = d.createElement('b'); b.className = 'ltr'; b.textContent = '$' + p1;
         if (t.hasAttribute('data-two') && p2) { b.textContent += ' / $' + p2; }
-        var frm = t.getAttribute('data-frm'), per = t.getAttribute('data-per');
         if (frm) { t.appendChild(d.createTextNode(frm + ' ')); } t.appendChild(b); if (per) { t.appendChild(d.createTextNode(' ' + per)); }
       });
-    }).catch(function () {});
+      return { rooms: j.rooms, offer: off };
+    });
   })();
 
   /* phone booking bar: stays out of the way while the booking box itself is on screen */
@@ -428,6 +453,24 @@
         p1.textContent = L.ofDates.replace('{a}', dm(o.from)).replace('{b}', dm(o.to)) + (o.min_nights > 1 ? ' · ' + L.ofMin.replace('{n}', o.min_nights) : '');
         p2.textContent = L.ofNote;
         w.appendChild(h); w.appendChild(p1); w.appendChild(p2); box.appendChild(n); box.appendChild(w); box.hidden = false;
+        if (priceData) {
+          priceData.then(function (pd) {
+            if (!pd || !pd.offer || pd.offer.percent !== o.percent) { return; }
+            var ul = d.createElement('ul'); ul.className = 'promo-rates';
+            var sel = box.closest('[data-booking]').querySelector('[name=room]');
+            ['standard', 'triple', 'junior-suite', 'royal-suite'].forEach(function (id) {
+              var r2 = twoRate(pd.rooms, id); if (r2 == null) { return; }
+              var op = sel && sel.querySelector('option[value="' + id + '"]');
+              var li = d.createElement('li'), nm = d.createElement('span'), pr = d.createElement('span');
+              nm.textContent = (op ? op.textContent : id) + ' · ' + TWO;
+              var s0 = d.createElement('s'); s0.className = 'ltr'; s0.textContent = '$' + r2;
+              var b0 = d.createElement('b'); b0.className = 'ltr'; b0.textContent = '$' + Math.round(r2 * (100 - o.percent) / 100);
+              pr.appendChild(s0); pr.appendChild(d.createTextNode(' ')); pr.appendChild(b0);
+              li.appendChild(nm); li.appendChild(pr); ul.appendChild(li);
+            });
+            if (ul.children.length) { w.appendChild(ul); }
+          });
+        }
       });
     }).catch(function () {});
   })();

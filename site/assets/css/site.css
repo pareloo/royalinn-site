@@ -1,6 +1,6 @@
-@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=f3b7e53f) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=f3b7e53f) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
-@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=f3b7e53f) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-400.woff2?v=71ec1446) format("woff2");font-weight:400;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-500.woff2?v=71ec1446) format("woff2");font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
+@font-face{font-family:"Inter";src:url(../fonts/inter-600.woff2?v=71ec1446) format("woff2");font-weight:600;font-style:normal;font-display:swap;unicode-range:U+0020-007E,U+00A0-00FF,U+011E-011F,U+0130-0131,U+015E-015F,U+0152-0153,U+2013-2014,U+2018-201A,U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+20AC,U+2190-2193,U+2605}
 /* Royal Inn Tartus — one stylesheet for every page.
    Light sea-and-sand palette. Logical properties throughout, so /ar/ (RTL) and /en/ (LTR) share every rule. */
 :root{
@@ -502,3 +502,10 @@ h1{font-size:1rem}
 .field input,.field select,.field textarea{border-color:#8aa3ad}
 .vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .hero-price{margin-top:.7em;font-size:.95rem;color:var(--ink)}.hero-price b{font-size:1.25rem;color:var(--sea)}
+
+[data-rp] s.was,.promo-rates s{color:var(--muted);font-weight:400;opacity:.85}
+.promo-rates{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:4px;font-size:.88rem}
+.promo-rates li{display:flex;justify-content:space-between;gap:10px;border-top:1px dashed rgba(0,0,0,.12);padding-top:5px}
+.promo-rates b{color:var(--sea)}
+.promo .promo-rates li{border-top-color:rgba(255,255,255,.18)}
+.promo .promo-rates b{color:#fff;font-size:1rem}.promo .promo-rates s{color:rgba(255,255,255,.65)}
